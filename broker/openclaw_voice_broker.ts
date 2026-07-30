@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import { loadConfig } from "../../openclaw/src/config/io.ts";
@@ -31,8 +32,52 @@ const ALLOWED_IPS = new Set(
 const SESSION_KEY = "main";
 const BODY_LIMIT = 128 * 1024;
 const TOOL_TIMEOUT_MS = 120_000;
+const HOME_ASSISTANT_KEYCHAIN_SERVICE = "pi-touchscreen-home-assistant-token";
+const HOME_ASSISTANT_KEYCHAIN_ACCOUNT =
+  process.env.HA_KEYCHAIN_ACCOUNT || "dan";
+
+function loadHomeAssistantToken(): string {
+  if (process.env.HA_TOKEN) return process.env.HA_TOKEN;
+  try {
+    return execFileSync(
+      "/usr/bin/security",
+      [
+        "find-generic-password",
+        "-a",
+        HOME_ASSISTANT_KEYCHAIN_ACCOUNT,
+        "-s",
+        HOME_ASSISTANT_KEYCHAIN_SERVICE,
+        "-w",
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+  } catch {
+    return "";
+  }
+}
+
+const HOME_ASSISTANT_URL = (
+  process.env.HA_URL || "http://homeassistant.local:8123"
+).replace(/\/+$/, "");
+const HOME_ASSISTANT_TOKEN = loadHomeAssistantToken();
+const SHOPPING_ENTITY_ID =
+  process.env.SHOPPING_LIST_ENTITY || "todo.shopping_list";
+const HOME_ASSISTANT_TIMEOUT_MS = 10_000;
 
 type JsonRecord = Record<string, unknown>;
+type ShoppingItem = {
+  id: string;
+  text: string;
+  completed: boolean;
+};
+type ShoppingSnapshot = {
+  items: ShoppingItem[];
+  activeCount: number;
+  completedCount: number;
+  syncedAt: string;
+  source: string;
+  outcome?: "added" | "duplicate" | "restored" | "updated" | "removed" | "cleared";
+};
 type RunWaiter = {
   resolve: (text: string) => void;
   reject: (error: Error) => void;
@@ -57,6 +102,150 @@ function safeError(error: unknown): string {
       /(?:token|secret|password|api[_-]?key)=\S+/gi,
       "[redacted credential]",
     );
+}
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : {};
+}
+
+function cleanItemText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 160);
+}
+
+function normalizeItemText(value: string): string {
+  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-GB");
+}
+
+async function homeAssistantJson(
+  path: string,
+  body?: JsonRecord,
+): Promise<unknown> {
+  if (!HOME_ASSISTANT_URL || !HOME_ASSISTANT_TOKEN) {
+    throw new Error("Home Assistant shopping list is not configured");
+  }
+  const response = await fetch(`${HOME_ASSISTANT_URL}${path}`, {
+    method: body ? "POST" : "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${HOME_ASSISTANT_TOKEN}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(HOME_ASSISTANT_TIMEOUT_MS),
+  });
+  const text = await response.text();
+  let result: unknown = {};
+  if (text) {
+    try {
+      result = JSON.parse(text);
+    } catch {
+      result = { detail: text.slice(0, 240) };
+    }
+  }
+  if (!response.ok) {
+    const detail = asRecord(result).message || asRecord(result).detail;
+    throw new Error(
+      `Home Assistant request failed (${response.status})${
+        typeof detail === "string" && detail ? `: ${detail}` : ""
+      }`,
+    );
+  }
+  return result;
+}
+
+async function getShoppingSnapshot(): Promise<ShoppingSnapshot> {
+  const result = asRecord(
+    await homeAssistantJson("/api/services/todo/get_items?return_response", {
+      entity_id: SHOPPING_ENTITY_ID,
+    }),
+  );
+  const serviceResponse = asRecord(result.service_response);
+  const entityResponse = asRecord(serviceResponse[SHOPPING_ENTITY_ID]);
+  const rawItems = Array.isArray(entityResponse.items) ? entityResponse.items : [];
+  const items = rawItems.flatMap((entry): ShoppingItem[] => {
+    const item = asRecord(entry);
+    const id = typeof item.uid === "string" ? item.uid : "";
+    const text = cleanItemText(item.summary);
+    if (!id || !text) return [];
+    return [
+      {
+        id,
+        text,
+        completed: item.status === "completed",
+      },
+    ];
+  });
+  return {
+    items,
+    activeCount: items.filter((item) => !item.completed).length,
+    completedCount: items.filter((item) => item.completed).length,
+    syncedAt: new Date().toISOString(),
+    source: SHOPPING_ENTITY_ID,
+  };
+}
+
+async function callTodoService(
+  service: "add_item" | "update_item" | "remove_item" | "remove_completed_items",
+  data: JsonRecord,
+): Promise<void> {
+  await homeAssistantJson(`/api/services/todo/${service}`, {
+    entity_id: SHOPPING_ENTITY_ID,
+    ...data,
+  });
+}
+
+async function addShoppingItem(value: unknown): Promise<ShoppingSnapshot> {
+  const text = cleanItemText(value);
+  if (!text) throw new Error("Item text is required");
+  const before = await getShoppingSnapshot();
+  const matching = before.items.find(
+    (item) => normalizeItemText(item.text) === normalizeItemText(text),
+  );
+  if (matching && !matching.completed) {
+    return { ...before, outcome: "duplicate" };
+  }
+  if (matching?.completed) {
+    await callTodoService("update_item", {
+      item: matching.id,
+      status: "needs_action",
+    });
+    return { ...(await getShoppingSnapshot()), outcome: "restored" };
+  }
+  await callTodoService("add_item", { item: text });
+  return { ...(await getShoppingSnapshot()), outcome: "added" };
+}
+
+async function updateShoppingItem(
+  id: string,
+  body: JsonRecord,
+): Promise<ShoppingSnapshot> {
+  const update: JsonRecord = { item: id };
+  if (typeof body.completed === "boolean") {
+    update.status = body.completed ? "completed" : "needs_action";
+  }
+  if (body.text !== undefined) {
+    const text = cleanItemText(body.text);
+    if (!text) throw new Error("Item text is required");
+    update.rename = text;
+  }
+  if (Object.keys(update).length === 1) {
+    throw new Error("No shopping-list changes were supplied");
+  }
+  await callTodoService("update_item", update);
+  return { ...(await getShoppingSnapshot()), outcome: "updated" };
+}
+
+async function removeShoppingItem(id: string): Promise<ShoppingSnapshot> {
+  await callTodoService("remove_item", { item: id });
+  return { ...(await getShoppingSnapshot()), outcome: "removed" };
+}
+
+async function clearCompletedShoppingItems(): Promise<ShoppingSnapshot> {
+  await callTodoService("remove_completed_items", {});
+  return { ...(await getShoppingSnapshot()), outcome: "cleared" };
 }
 
 function extractMessageText(message: unknown): string {
@@ -244,9 +433,62 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     sendJson(response, gatewayReady ? 200 : 503, {
       ok: gatewayReady,
       service: "openclaw-voice-broker",
+      shoppingConfigured: Boolean(HOME_ASSISTANT_URL && HOME_ASSISTANT_TOKEN),
     });
     return;
   }
+  if (request.method === "GET" && path === "/shopping") {
+    try {
+      sendJson(response, 200, await getShoppingSnapshot());
+    } catch (error) {
+      sendJson(response, 502, { error: safeError(error) });
+    }
+    return;
+  }
+
+  const shoppingItemPrefix = "/shopping/items/";
+  const isShoppingWrite =
+    (request.method === "POST" && path === "/shopping/items") ||
+    (request.method === "POST" && path === "/shopping/clear-completed") ||
+    ((request.method === "PATCH" || request.method === "DELETE") &&
+      path.startsWith(shoppingItemPrefix));
+  if (isShoppingWrite) {
+    const body = await readJson(request);
+    try {
+      if (request.method === "POST" && path === "/shopping/items") {
+        sendJson(response, 200, await addShoppingItem(body.text));
+        return;
+      }
+      if (request.method === "POST" && path === "/shopping/clear-completed") {
+        sendJson(response, 200, await clearCompletedShoppingItems());
+        return;
+      }
+      let id = "";
+      try {
+        id = decodeURIComponent(path.slice(shoppingItemPrefix.length)).trim();
+      } catch {
+        sendJson(response, 400, { error: "Invalid shopping item id" });
+        return;
+      }
+      if (!id || id.length > 200) {
+        sendJson(response, 400, { error: "Invalid shopping item id" });
+        return;
+      }
+      if (request.method === "PATCH") {
+        sendJson(response, 200, await updateShoppingItem(id, body));
+        return;
+      }
+      sendJson(response, 200, await removeShoppingItem(id));
+      return;
+    } catch (error) {
+      const message = safeError(error);
+      const status =
+        message.includes("required") || message.includes("supplied") ? 400 : 502;
+      sendJson(response, status, { error: message });
+    }
+    return;
+  }
+
   if (request.method !== "POST") {
     sendJson(response, 404, { error: "Not found" });
     return;

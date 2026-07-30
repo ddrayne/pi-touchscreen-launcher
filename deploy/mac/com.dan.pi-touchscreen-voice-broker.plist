@@ -28,6 +28,10 @@
     <string>18890</string>
     <key>VOICE_BROKER_ALLOWED_IPS</key>
     <string>127.0.0.1,::1,192.168.86.232</string>
+    <key>HA_URL</key>
+    <string>http://homeassistant.local:8123</string>
+    <key>HA_KEYCHAIN_ACCOUNT</key>
+    <string>dan</string>
   </dict>
 
   <key>RunAtLoad</key>

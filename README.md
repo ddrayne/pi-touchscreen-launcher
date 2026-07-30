@@ -4,6 +4,7 @@ A portrait kiosk launcher for `pi-touchscreen.local`. It combines:
 
 - a touch-first home screen with live BirdFrame data;
 - OpenClaw Talk using OpenAI Realtime over WebRTC;
+- the canonical Home Assistant shopping list with touch and OpenClaw access;
 - a local, offline “Computer” wake-word gate;
 - a native IMX708 camera preview;
 - reliable two-way switching between the launcher and BirdFrame.
@@ -19,7 +20,7 @@ Seeed microphones
   ├─ PocketSphinx on Pi ── “Computer” ───────────────┐
   └─ Chromium mic ── direct WebRTC audio ── OpenAI   │
                                                      ▼
-Inline launcher ↔ Pi loopback bridge ↔ Mac voice broker
+Inline launcher ↔ Pi loopback bridge ↔ Mac voice/home broker
       │                 │                    │
       │                 │                    └─ persistent OpenClaw Gateway
       │                 └─ wlrctl + native camera       └─ agent/tools
@@ -37,8 +38,9 @@ The runtime pieces are:
   and PocketSphinx. No idle audio leaves the Pi.
 - `birdframe-display.service`: runs the existing Flutter BirdFrame display.
 - `com.dan.pi-touchscreen-voice-broker`: a Mac LaunchAgent that owns one
-  authenticated OpenClaw Gateway connection. It exposes only session, consult,
-  and active-run control operations to the Pi’s LAN address.
+  authenticated OpenClaw Gateway connection and the Home Assistant credential.
+  It exposes only session, consult, active-run control, and shopping-list
+  operations to the Pi’s LAN address.
 - the Chromium extension in `extension/`: retains a Home button in the full
   OpenClaw UI as a fallback; the normal voice UX no longer navigates there.
 
@@ -145,6 +147,32 @@ The bridge binds to loopback only.
 | `POST /api/voice/session` | Request a short-lived WebRTC session |
 | `POST /api/voice/tool` | Await an OpenClaw agent consult on the broker connection |
 | `POST /api/voice/control` | Status, steer, cancel, or queue active work |
+| `GET /api/shopping` | Read the canonical Home Assistant shopping list |
+| `POST /api/shopping/items` | Add an item, restoring a matching completed item |
+| `PATCH /api/shopping/items/:uid` | Rename, complete, or restore an item |
+| `DELETE /api/shopping/items/:uid` | Remove an item |
+| `POST /api/shopping/clear-completed` | Remove all completed items |
+
+## Canonical house shopping list
+
+Home Assistant `todo.shopping_list` is the single source of truth. The Mac
+broker owns `HA_URL` and `HA_TOKEN`; the browser and Pi receive only the narrow
+shopping API above. OpenClaw uses the bundled `house-shopping-list` skill and
+the same broker routes, so touch, voice, messaging, and the Home Assistant
+dashboard never create competing lists.
+
+Before the first Mac broker activation, provide the Home Assistant token in the
+shell environment:
+
+```bash
+export HA_TOKEN='<long-lived Home Assistant token>'
+./deploy/mac/activate.command
+```
+
+The activation script stores the token in the macOS login Keychain, installs
+the OpenClaw skill, and restarts the allowlisted LAN broker. Subsequent
+activations read the credential from Keychain. The token is never written to
+the repository, LaunchAgent plist, browser, or Pi.
 
 The native camera endpoint is deliberate. Chromium 150 on this Debian
 Wayland/PipeWire image exposes the IMX708 but can leave `getUserMedia(video)`

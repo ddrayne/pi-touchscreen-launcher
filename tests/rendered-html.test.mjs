@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
-
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
-const templateRoot = new URL("../", import.meta.url);
-const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -28,64 +23,58 @@ async function render() {
   );
 }
 
-test("server-renders the starter loading skeleton", async () => {
+test("server-renders the touchscreen launcher", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, developmentPreviewMeta);
-  assert.match(html, /<title>Your site is taking shape<\/title>/i);
-  assert.match(html, /Building your site/);
-  assert.match(html, /Your site is taking shape/);
-  assert.match(
-    html,
-    /Your first version will appear here automatically when it’s ready\./,
-  );
-  assert.doesNotMatch(html, /Codex/);
-  assert.match(html, /react-loading-skeleton/);
-  assert.match(html, /role="status"/);
+  assert.match(html, /<title>Touchscreen Assistant<\/title>/i);
+  assert.match(html, /A quiet intelligence/);
+  assert.match(html, /What would you like to know\?/);
+  assert.match(html, /Live from BirdFrame/);
+  assert.match(html, /House shopping/);
+  assert.match(html, /\+ Add item/);
+  assert.match(html, />Look</);
+  assert.doesNotMatch(html, /HA_TOKEN|Bearer\s+[A-Za-z0-9._-]+/);
 });
 
-test("keeps the loading skeleton scoped and disposable", async () => {
-  const [preview, css, page, layout, packageJson, files] = await Promise.all([
-    readFile(new URL("SkeletonPreview.tsx", previewRoot), "utf8"),
-    readFile(new URL("preview.css", previewRoot), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readdir(previewRoot),
+test("keeps shopping writes behind the narrow broker boundary", async () => {
+  const [launcher, css, bridge, broker, skill] = await Promise.all([
+    readFile(new URL("../components/Launcher.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../bridge/launcher_bridge.py", import.meta.url), "utf8"),
+    readFile(
+      new URL("../broker/openclaw_voice_broker.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(
+      new URL(
+        "../openclaw/house-shopping-list/SKILL.md",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
   ]);
 
-  assert.deepEqual(files.sort(), ["SkeletonPreview.tsx", "preview.css"]);
-  assert.match(preview, /from "react-loading-skeleton"/);
-  assert.match(preview, /baseColor="#eceae7"/);
-  assert.match(preview, /highlightColor="#f9f8f6"/);
-  assert.match(preview, /duration=\{2\.8\}/);
-  assert.match(preview, /sites-skeleton-search-placeholder/);
-  assert.match(packageJson, /"react-loading-skeleton": "3\.5\.0"/);
+  assert.match(launcher, /fetch\("\/api\/shopping"/);
+  assert.match(launcher, /\/api\/shopping\/items/);
+  assert.match(launcher, /shopping-sheet__check/);
+  assert.doesNotMatch(launcher, /HA_TOKEN|homeassistant\.local/);
 
-  const shellIndex = preview.indexOf('className="sites-skeleton-shell"');
-  const statusIndex = preview.indexOf('className="sites-skeleton-status"');
-  assert.ok(shellIndex >= 0 && statusIndex > shellIndex);
-  assert.match(css, /position:\s*fixed/);
-  assert.match(css, /inset:\s*0/);
-  assert.match(css, /opacity:\s*0\.52/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
-  assert.doesNotMatch(css, /#020617|canvas|pets|progress/i);
-  assert.doesNotMatch(
-    preview,
-    /loading-spinner|status-mark|status-progress|canvas|cookie|random/i,
-  );
+  assert.match(css, /\.shopping-card/);
+  assert.match(css, /\.shopping-sheet/);
 
-  assert.match(page, /export const metadata:\s*Metadata/);
-  assert.match(page, /"codex-preview": "development"/);
-  assert.match(page, /<SkeletonPreview \/>/);
-  assert.match(layout, /title:\s*"Starter Project"/);
-  assert.doesNotMatch(layout, /codex-preview|_sites-preview|themeColor|\bViewport\b/);
-  assert.doesNotMatch(css, /(^|\s)(html|body)\s*\{/m);
+  assert.match(bridge, /"\/api\/shopping"/);
+  assert.match(bridge, /proxy_shopping_write/);
+  assert.doesNotMatch(bridge, /HA_TOKEN/);
 
-  await assert.rejects(
-    access(new URL("public/_sites-preview", templateRoot)),
-  );
+  assert.match(broker, /SHOPPING_ENTITY_ID/);
+  assert.match(broker, /todo\/get_items\?return_response/);
+  assert.match(broker, /HOME_ASSISTANT_KEYCHAIN_SERVICE/);
+  assert.match(broker, /ALLOWED_IPS/);
+
+  assert.match(skill, /canonical list is Home Assistant `todo\.shopping_list`/);
+  assert.match(skill, /http:\/\/127\.0\.0\.1:18890\/shopping/);
+  assert.doesNotMatch(skill, /HA_TOKEN|Bearer /);
 });

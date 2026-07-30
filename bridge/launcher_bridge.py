@@ -68,6 +68,15 @@ def fetch_json(url: str, timeout: float = 2.5) -> Any:
 def post_json(
     url: str, payload: dict[str, Any], timeout: float = 30.0
 ) -> tuple[int, Any]:
+    return request_json(url, "POST", payload, timeout)
+
+
+def request_json(
+    url: str,
+    method: str,
+    payload: dict[str, Any],
+    timeout: float = 30.0,
+) -> tuple[int, Any]:
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -77,7 +86,7 @@ def post_json(
             "Content-Type": "application/json",
             "User-Agent": "PiTouchscreenLauncher/1",
         },
-        method="POST",
+        method=method,
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -86,7 +95,7 @@ def post_json(
         try:
             result = json.loads(error.read().decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            result = {"error": "Voice broker request failed"}
+            result = {"error": "Touchscreen broker request failed"}
         return error.code, result
 
 
@@ -275,6 +284,71 @@ class LauncherHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(image)
 
+    def read_json_payload(self, body_limit: int) -> dict[str, Any] | None:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json({"error": "Invalid content length"}, HTTPStatus.BAD_REQUEST)
+            return None
+        if content_length > body_limit:
+            self.send_json(
+                {"error": "Request body is too large"},
+                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            )
+            return None
+        length = max(0, content_length)
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, UnicodeDecodeError):
+            self.send_json({"error": "Invalid JSON"}, HTTPStatus.BAD_REQUEST)
+            return None
+        if not isinstance(payload, dict):
+            self.send_json(
+                {"error": "JSON body must be an object"},
+                HTTPStatus.BAD_REQUEST,
+            )
+            return None
+        return payload
+
+    def proxy_shopping_write(self, method: str) -> None:
+        path = self.path.split("?", 1)[0]
+        if method == "POST" and path == "/api/shopping/items":
+            broker_path = "/shopping/items"
+        elif method == "POST" and path == "/api/shopping/clear-completed":
+            broker_path = "/shopping/clear-completed"
+        elif method in {"PATCH", "DELETE"} and path.startswith(
+            "/api/shopping/items/"
+        ):
+            broker_path = path.removeprefix("/api")
+        else:
+            self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+
+        payload = self.read_json_payload(8 * 1024)
+        if payload is None:
+            return
+        try:
+            status, result = request_json(
+                f"{VOICE_BROKER_URL}{broker_path}",
+                method,
+                payload,
+                timeout=15.0,
+            )
+            self.send_json(result, status)
+        except (
+            OSError,
+            ValueError,
+            TimeoutError,
+            urllib.error.URLError,
+        ) as error:
+            self.send_json(
+                {
+                    "error": "The household shopping list is unavailable",
+                    "detail": str(error),
+                },
+                HTTPStatus.BAD_GATEWAY,
+            )
+
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/api/status":
             self.send_json(
@@ -286,9 +360,25 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                         "birdframe-display.service"
                     ),
                     "wakeReady": service_active("touchscreen-wake.service"),
+                    "shoppingReady": endpoint_ready(
+                        f"{VOICE_BROKER_URL}/shopping"
+                    ),
                     "openClawUrl": OPENCLAW_URL,
                 }
             )
+            return
+
+        if self.path == "/api/shopping":
+            try:
+                self.send_json(fetch_json(f"{VOICE_BROKER_URL}/shopping", timeout=12.0))
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                self.send_json(
+                    {
+                        "error": "The household shopping list is unavailable",
+                        "detail": str(error),
+                    },
+                    HTTPStatus.BAD_GATEWAY,
+                )
             return
 
         if self.path == "/api/birdframe":
@@ -326,6 +416,13 @@ class LauncherHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path in {
+            "/api/shopping/items",
+            "/api/shopping/clear-completed",
+        }:
+            self.proxy_shopping_write("POST")
+            return
+
         voice_paths = {
             "/api/voice/session": "/session",
             "/api/voice/tool": "/tool",
@@ -336,28 +433,8 @@ class LauncherHandler(SimpleHTTPRequestHandler):
             return
 
         body_limit = 128 * 1024 if self.path in voice_paths else 1024
-        try:
-            content_length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            self.send_json({"error": "Invalid content length"}, HTTPStatus.BAD_REQUEST)
-            return
-        if content_length > body_limit:
-            self.send_json(
-                {"error": "Request body is too large"},
-                HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
-            )
-            return
-        length = max(0, content_length)
-        try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
-        except (ValueError, UnicodeDecodeError):
-            self.send_json({"error": "Invalid JSON"}, HTTPStatus.BAD_REQUEST)
-            return
-        if not isinstance(payload, dict):
-            self.send_json(
-                {"error": "JSON body must be an object"},
-                HTTPStatus.BAD_REQUEST,
-            )
+        payload = self.read_json_payload(body_limit)
+        if payload is None:
             return
 
         if self.path in voice_paths:
@@ -424,6 +501,12 @@ class LauncherHandler(SimpleHTTPRequestHandler):
             {"ok": ok, "target": target, "detail": detail},
             HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE,
         )
+
+    def do_PATCH(self) -> None:  # noqa: N802
+        self.proxy_shopping_write("PATCH")
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        self.proxy_shopping_write("DELETE")
 
     def guess_type(self, path: str) -> str:
         return mimetypes.guess_type(path)[0] or "application/octet-stream"
