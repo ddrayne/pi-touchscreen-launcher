@@ -59,18 +59,35 @@ test("keeps shopping writes behind the narrow broker boundary", async () => {
 
   assert.match(launcher, /fetch\("\/api\/shopping"/);
   assert.match(launcher, /\/api\/shopping\/items/);
+  assert.match(launcher, /\/api\/shopping\/events/);
+  assert.match(launcher, /\/api\/shopping\/camera\/analyze/);
+  assert.match(launcher, /\/api\/shopping\/reconcile/);
+  assert.match(launcher, /\/api\/shopping\/household/);
+  assert.match(launcher, /\/api\/household\/control/);
   assert.match(launcher, /shopping-sheet__check/);
+  assert.match(launcher, /Shopping camera/);
+  assert.match(launcher, /Household access & reminders/);
   assert.doesNotMatch(launcher, /HA_TOKEN|homeassistant\.local/);
 
   assert.match(css, /\.shopping-card/);
   assert.match(css, /\.shopping-sheet/);
+  assert.match(css, /\.household-page/);
+  assert.match(css, /\.camera-sheet__analysis/);
 
   assert.match(bridge, /"\/api\/shopping"/);
   assert.match(bridge, /proxy_shopping_write/);
+  assert.match(bridge, /proxy_shopping_events/);
+  assert.match(bridge, /analyze_camera_for_shopping/);
+  assert.match(bridge, /"\/api\/household"/);
   assert.doesNotMatch(bridge, /HA_TOKEN/);
 
   assert.match(broker, /SHOPPING_ENTITY_ID/);
   assert.match(broker, /todo\/get_items\?return_response/);
+  assert.match(broker, /shopping_list_updated/);
+  assert.match(broker, /CAMERA_ANALYSIS_SCHEMA/);
+  assert.match(broker, /store: false/);
+  assert.match(broker, /SHOPPING_NOTIFY_SERVICES/);
+  assert.match(broker, /HOUSEHOLD_CONTROL_ENTITIES/);
   assert.match(broker, /HOME_ASSISTANT_KEYCHAIN_SERVICE/);
   assert.match(broker, /ALLOWED_IPS/);
 

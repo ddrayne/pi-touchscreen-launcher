@@ -16,6 +16,7 @@ export type InlineVoiceCallbacks = {
   onStatus: (status: InlineVoiceStatus, detail?: string) => void;
   onInputLevel: (level: number) => void;
   onTranscript: (entry: InlineVoiceTranscript) => void;
+  onToolResult?: (name: string, result: unknown) => void;
   onIdleTimeout?: () => void;
 };
 
@@ -490,6 +491,7 @@ export class InlineRealtimeVoice {
       } else {
         result = { error: `Unsupported voice tool: ${name}` };
       }
+      this.callbacks.onToolResult?.(name, result);
       this.submitToolResult(callId, result);
     } catch (error) {
       if (!this.closed) {

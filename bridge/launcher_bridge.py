@@ -8,10 +8,13 @@ health, and switches the two fullscreen windows through wlrctl.
 
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
 import os
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import urllib.error
@@ -113,13 +116,16 @@ def endpoint_ready(url: str) -> bool:
 
 
 def service_active(name: str) -> bool:
-    result = subprocess.run(
-        ["/usr/bin/systemctl", "--user", "is-active", "--quiet", name],
-        check=False,
-        capture_output=True,
-        timeout=3,
-    )
-    return result.returncode == 0
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "--user", "is-active", "--quiet", name],
+            check=False,
+            capture_output=True,
+            timeout=3,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def focus_window(target: str) -> tuple[bool, str]:
@@ -192,6 +198,39 @@ def capture_camera_jpeg() -> bytes:
         CAMERA_LOCK.release()
 
 
+def detect_camera_barcode(image: bytes) -> str:
+    scanner = shutil.which("zbarimg")
+    if not scanner:
+        return ""
+    temp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as image_file:
+            image_file.write(image)
+            temp_path = image_file.name
+        result = subprocess.run(
+            [scanner, "--quiet", "--raw", temp_path],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode not in {0, 4}:
+            return ""
+        return "".join(
+            character
+            for character in result.stdout.splitlines()[0].strip()
+            if character.isalnum() or character == "-"
+        )[:64] if result.stdout.strip() else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
+
 def wake_status() -> dict[str, Any]:
     with WAKE_LOCK:
         return {
@@ -254,6 +293,7 @@ def mute_wake(seconds: float) -> dict[str, Any]:
 
 class LauncherHandler(SimpleHTTPRequestHandler):
     server_version = "PiTouchscreenLauncher/1"
+    protocol_version = "HTTP/1.1"
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, directory=str(STATIC_ROOT), **kwargs)
@@ -314,6 +354,16 @@ class LauncherHandler(SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if method == "POST" and path == "/api/shopping/items":
             broker_path = "/shopping/items"
+        elif method == "POST" and path == "/api/shopping/items/batch":
+            broker_path = "/shopping/items/batch"
+        elif method == "POST" and path == "/api/shopping/reconcile":
+            broker_path = "/shopping/reconcile"
+        elif method == "POST" and path == "/api/shopping/organize":
+            broker_path = "/shopping/organize"
+        elif method == "POST" and path == "/api/shopping/share":
+            broker_path = "/shopping/share"
+        elif method == "POST" and path == "/api/shopping/household":
+            broker_path = "/shopping/household"
         elif method == "POST" and path == "/api/shopping/clear-completed":
             broker_path = "/shopping/clear-completed"
         elif method in {"PATCH", "DELETE"} and path.startswith(
@@ -324,7 +374,7 @@ class LauncherHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
             return
 
-        payload = self.read_json_payload(8 * 1024)
+        payload = self.read_json_payload(24 * 1024)
         if payload is None:
             return
         try:
@@ -349,6 +399,79 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                 HTTPStatus.BAD_GATEWAY,
             )
 
+    def proxy_shopping_events(self) -> None:
+        request = urllib.request.Request(
+            f"{VOICE_BROKER_URL}/shopping/events",
+            headers={
+                "Accept": "text/event-stream",
+                "User-Agent": "PiTouchscreenLauncher/1",
+            },
+            method="GET",
+        )
+        headers_sent = False
+        try:
+            with urllib.request.urlopen(request, timeout=70.0) as upstream:
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-store, no-transform")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
+                headers_sent = True
+                while True:
+                    line = upstream.readline()
+                    if not line:
+                        break
+                    self.wfile.write(line)
+                    self.wfile.flush()
+        except (
+            BrokenPipeError,
+            ConnectionResetError,
+            TimeoutError,
+            urllib.error.URLError,
+        ) as error:
+            if not headers_sent:
+                self.send_json(
+                    {
+                        "error": "Shopping updates are unavailable",
+                        "detail": str(error),
+                    },
+                    HTTPStatus.BAD_GATEWAY,
+                )
+            self.close_connection = True
+
+    def analyze_camera_for_shopping(self) -> None:
+        payload = self.read_json_payload(1024)
+        if payload is None:
+            return
+        try:
+            image = capture_camera_jpeg()
+            barcode = detect_camera_barcode(image)
+            status, result = request_json(
+                f"{VOICE_BROKER_URL}/shopping/camera/analyze",
+                "POST",
+                {
+                    "imageBase64": base64.b64encode(image).decode("ascii"),
+                    **({"barcode": barcode} if barcode else {}),
+                },
+                timeout=75.0,
+            )
+            self.send_json(result, status)
+        except (
+            OSError,
+            RuntimeError,
+            ValueError,
+            TimeoutError,
+            urllib.error.URLError,
+        ) as error:
+            self.send_json(
+                {
+                    "error": "The camera could not be analysed",
+                    "detail": str(error),
+                },
+                HTTPStatus.BAD_GATEWAY,
+            )
+
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/api/status":
             self.send_json(
@@ -366,6 +489,63 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                     "openClawUrl": OPENCLAW_URL,
                 }
             )
+            return
+
+        if self.path == "/api/household":
+            try:
+                self.send_json(
+                    fetch_json(f"{VOICE_BROKER_URL}/household", timeout=15.0)
+                )
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                self.send_json(
+                    {
+                        "error": "The household hub is unavailable",
+                        "detail": str(error),
+                    },
+                    HTTPStatus.BAD_GATEWAY,
+                )
+            return
+
+        if self.path == "/api/shopping/events":
+            self.proxy_shopping_events()
+            return
+
+        if self.path.startswith("/api/shopping/activity"):
+            query = self.path.partition("?")[2]
+            suffix = f"?{query}" if query else ""
+            try:
+                self.send_json(
+                    fetch_json(
+                        f"{VOICE_BROKER_URL}/shopping/activity{suffix}",
+                        timeout=12.0,
+                    )
+                )
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                self.send_json(
+                    {
+                        "error": "Shopping activity is unavailable",
+                        "detail": str(error),
+                    },
+                    HTTPStatus.BAD_GATEWAY,
+                )
+            return
+
+        if self.path == "/api/shopping/household":
+            try:
+                self.send_json(
+                    fetch_json(
+                        f"{VOICE_BROKER_URL}/shopping/household",
+                        timeout=12.0,
+                    )
+                )
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                self.send_json(
+                    {
+                        "error": "Household shopping settings are unavailable",
+                        "detail": str(error),
+                    },
+                    HTTPStatus.BAD_GATEWAY,
+                )
             return
 
         if self.path == "/api/shopping":
@@ -416,8 +596,43 @@ class LauncherHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/api/shopping/camera/analyze":
+            self.analyze_camera_for_shopping()
+            return
+
+        if self.path == "/api/household/control":
+            payload = self.read_json_payload(1024)
+            if payload is None:
+                return
+            try:
+                status, result = post_json(
+                    f"{VOICE_BROKER_URL}/household/control",
+                    payload,
+                    timeout=18.0,
+                )
+                self.send_json(result, status)
+            except (
+                OSError,
+                ValueError,
+                TimeoutError,
+                urllib.error.URLError,
+            ) as error:
+                self.send_json(
+                    {
+                        "error": "The household control is unavailable",
+                        "detail": str(error),
+                    },
+                    HTTPStatus.BAD_GATEWAY,
+                )
+            return
+
         if self.path in {
             "/api/shopping/items",
+            "/api/shopping/items/batch",
+            "/api/shopping/reconcile",
+            "/api/shopping/organize",
+            "/api/shopping/share",
+            "/api/shopping/household",
             "/api/shopping/clear-completed",
         }:
             self.proxy_shopping_write("POST")

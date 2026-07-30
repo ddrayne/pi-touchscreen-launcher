@@ -41,6 +41,56 @@ function call(method, params = {}) {
 
 await call("Page.enable");
 await call("Runtime.enable");
+const requestedView = process.env.TOUCHSCREEN_VIEW?.trim();
+if (requestedView) {
+  const viewSteps = {
+    home: [
+      { label: "← Home", optional: true },
+      { label: "Voice home" },
+    ],
+    household: [
+      { label: "← Home", optional: true },
+      { label: "Household hub" },
+    ],
+    shopping: [
+      { label: "← Home", optional: true },
+      { label: "House shopping" },
+    ],
+    camera: [
+      { label: "← Home", optional: true },
+      { label: "Voice home" },
+      { label: "Look" },
+    ],
+  };
+  const steps = viewSteps[requestedView];
+  if (!steps) {
+    throw new Error(
+      `Unknown TOUCHSCREEN_VIEW ${JSON.stringify(requestedView)}`,
+    );
+  }
+  for (const step of steps) {
+    const { label, optional = false } = step;
+    const interaction = await call("Runtime.evaluate", {
+      expression: `(() => {
+        const label = ${JSON.stringify(label)};
+        const candidate = [...document.querySelectorAll("button")].find((button) =>
+          button.getAttribute("aria-label") === label ||
+          button.textContent?.trim().includes(label)
+        );
+        if (!candidate) return { clicked: false, label };
+        candidate.click();
+        return { clicked: true, label };
+      })()`,
+      returnByValue: true,
+    });
+    if (!interaction.result?.result?.value?.clicked && !optional) {
+      throw new Error(`Could not open touchscreen view ${requestedView}`);
+    }
+    if (interaction.result?.result?.value?.clicked) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+  }
+}
 await new Promise((resolve) => setTimeout(resolve, 1_000));
 const state = await call("Runtime.evaluate", {
   expression: `(() => ({

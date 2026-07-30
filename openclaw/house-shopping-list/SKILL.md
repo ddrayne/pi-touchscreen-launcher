@@ -29,7 +29,7 @@ Items have this shape:
 
 ```bash
 item_text='Milk'
-jq -nc --arg text "$item_text" '{text:$text}' |
+jq -nc --arg text "$item_text" '{text:$text,source:"openclaw"}' |
   curl -fsS --max-time 20 -X POST \
     -H 'Content-Type: application/json' \
     --data-binary @- \
@@ -47,7 +47,7 @@ could match more than one item, ask which one before writing.
 ```bash
 item_id='exact uid from the list'
 encoded_id=$(jq -rn --arg value "$item_id" '$value|@uri')
-jq -nc --argjson completed true '{completed:$completed}' |
+jq -nc --argjson completed true '{completed:$completed,source:"openclaw"}' |
   curl -fsS --max-time 20 -X PATCH \
     -H 'Content-Type: application/json' \
     --data-binary @- \
@@ -66,7 +66,7 @@ item_id='exact uid from the list'
 encoded_id=$(jq -rn --arg value "$item_id" '$value|@uri')
 curl -fsS --max-time 20 -X DELETE \
   -H 'Content-Type: application/json' \
-  --data '{}' \
+  --data '{"source":"openclaw"}' \
   "http://127.0.0.1:18890/shopping/items/$encoded_id"
 ```
 
@@ -77,14 +77,63 @@ Confirm before clearing multiple completed items.
 ```bash
 curl -fsS --max-time 20 -X POST \
   -H 'Content-Type: application/json' \
-  --data '{}' \
+  --data '{"source":"openclaw"}' \
   http://127.0.0.1:18890/shopping/clear-completed
+```
+
+## Add several items in one operation
+
+Use the batch endpoint rather than making separate shell calls. Preserve useful
+quantities and units in each item string.
+
+```bash
+jq -nc \
+  --argjson items '["2 litres milk","bananas","500 g pasta"]' \
+  '{items:$items,source:"openclaw"}' |
+  curl -fsS --max-time 30 -X POST \
+    -H 'Content-Type: application/json' \
+    --data-binary @- \
+    http://127.0.0.1:18890/shopping/items/batch
+```
+
+## Reconcile a recipe or photographed list
+
+For a recipe, meal plan, handwritten list, or receipt, first derive clean
+shopping-item strings with quantities where useful. Preview against the
+canonical list:
+
+```bash
+jq -nc \
+  --argjson items '["2 onions","400 g chickpeas","coriander"]' \
+  '{items:$items,commit:false,source:"openclaw"}' |
+  curl -fsS --max-time 30 -X POST \
+    -H 'Content-Type: application/json' \
+    --data-binary @- \
+    http://127.0.0.1:18890/shopping/reconcile
+```
+
+The response separates `missing` from `alreadyListed`. If the user explicitly
+asked to add the ingredients, repeat with `commit:true`; otherwise show the
+preview and ask before writing.
+
+## Organize duplicates
+
+Only run this after an explicit request. Exact product duplicates are merged,
+and compatible numeric quantities are combined.
+
+```bash
+curl -fsS --max-time 30 -X POST \
+  -H 'Content-Type: application/json' \
+  --data '{"source":"openclaw"}' \
+  http://127.0.0.1:18890/shopping/organize
 ```
 
 ## Response style
 
 - For a successful single write, respond naturally and briefly.
 - When reading the list, omit completed items unless the user asks for them.
-- For recipe or meal-plan requests, derive the proposed ingredients, read the
-  current list, avoid obvious duplicates, then add the remaining items.
+- When the user names several items in one utterance, use the batch endpoint
+  once and confirm the resulting additions in one sentence.
+- For recipe or meal-plan requests, use reconciliation so existing products are
+  not added twice.
 - Never mention internal IDs or adapter details to the user.

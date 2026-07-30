@@ -147,10 +147,20 @@ The bridge binds to loopback only.
 | `POST /api/voice/session` | Request a short-lived WebRTC session |
 | `POST /api/voice/tool` | Await an OpenClaw agent consult on the broker connection |
 | `POST /api/voice/control` | Status, steer, cancel, or queue active work |
+| `GET /api/household` | Weather, shared calendar events, and allowlisted room controls |
+| `POST /api/household/control` | Toggle one allowlisted Home Assistant light group |
 | `GET /api/shopping` | Read the canonical Home Assistant shopping list |
+| `GET /api/shopping/events` | Instant snapshots and source-aware activity over SSE |
+| `GET /api/shopping/activity` | Recent shopping changes and their source |
 | `POST /api/shopping/items` | Add an item, restoring a matching completed item |
+| `POST /api/shopping/items/batch` | Add several deduplicated items |
 | `PATCH /api/shopping/items/:uid` | Rename, complete, or restore an item |
 | `DELETE /api/shopping/items/:uid` | Remove an item |
+| `POST /api/shopping/reconcile` | Preview or commit a recipe, receipt, or photographed list |
+| `POST /api/shopping/organize` | Merge duplicate products and compatible quantities |
+| `POST /api/shopping/camera/analyze` | Analyse one explicitly requested Pi camera frame |
+| `GET/POST /api/shopping/household` | Read or save mobile arrival-reminder settings |
+| `POST /api/shopping/share` | Send the current list to an allowlisted household phone |
 | `POST /api/shopping/clear-completed` | Remove all completed items |
 
 ## Canonical house shopping list
@@ -160,6 +170,17 @@ broker owns `HA_URL` and `HA_TOKEN`; the browser and Pi receive only the narrow
 shopping API above. OpenClaw uses the bundled `house-shopping-list` skill and
 the same broker routes, so touch, voice, messaging, and the Home Assistant
 dashboard never create competing lists.
+
+The browser subscribes to the broker event stream, so a voice or Home
+Assistant change appears immediately. During a network interruption,
+touchscreen mutations stay in a bounded local outbox and replay in order after
+reconnection. The broker keeps a mode-`0600`, source-aware activity log at
+`~/.openclaw/logs/shopping-activity.jsonl`.
+
+Shopping text is parsed into a display-only quantity, unit, and supermarket
+section while the original Home Assistant item remains canonical. Batch and
+reconciliation routes avoid duplicate products. The organizer only merges
+matching products and only sums quantities whose units are compatible.
 
 Before the first Mac broker activation, provide the Home Assistant token in the
 shell environment:
@@ -174,10 +195,40 @@ the OpenClaw skill, and restarts the allowlisted LAN broker. Subsequent
 activations read the credential from Keychain. The token is never written to
 the repository, LaunchAgent plist, browser, or Pi.
 
+Home Assistant's to-do dashboard and mobile app can manage the same list. The
+touchscreen can send a snapshot to the configured `mobile_app` notifier.
+Arrival reminders remain disabled until a non-home shop zone, household
+person, and phone are explicitly selected on screen. The broker then notifies
+only when that person enters that zone and the list is non-empty.
+
+## Camera shopping
+
+The camera sheet keeps its continuously refreshed preview on the Pi. No image
+is sent for analysis until someone taps **Add what I can see**. That single
+JPEG then travels through the loopback bridge to the allowlisted Mac broker;
+the browser receives neither the image payload nor the OpenAI key. The broker
+sends the frame with `store: false`, validates strict structured output, and
+shows confidence and evidence before any candidate can be committed.
+
+The broker reads the OpenAI credential from `OPENAI_API_KEY` or the
+mode-`0600` file `~/.openclaw/secrets/openai-api-key`. The default
+cost-sensitive vision model can be changed with `OPENAI_VISION_MODEL`. Local
+barcode detection is used automatically when `zbarimg` is available on the Pi.
+
 The native camera endpoint is deliberate. Chromium 150 on this Debian
 Wayland/PipeWire image exposes the IMX708 but can leave `getUserMedia(video)`
 pending indefinitely. `rpicam-still` is stable, fast, and keeps the private
 preview entirely on the Pi.
+
+## Swipeable household hub
+
+Swipe left from the voice landing page, or tap the second page dot, for a
+household summary. It shows `weather.home`, upcoming events from explicitly
+allowlisted shared calendars, the canonical shopping list, BirdFrame, and four
+allowlisted light groups. Private calendars and arbitrary Home Assistant
+services are not exposed. Override the curated defaults with
+`HOUSEHOLD_WEATHER_ENTITY`, `HOUSEHOLD_CALENDAR_ENTITIES`, and
+`HOUSEHOLD_CONTROL_ENTITIES` in the Mac broker environment.
 
 ## Wake-word tuning
 
