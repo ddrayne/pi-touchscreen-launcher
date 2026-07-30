@@ -1,0 +1,36 @@
+[Unit]
+Description=Touchscreen assistant kiosk
+After=graphical-session.target pipewire.service wireplumber.service touchscreen-bridge.service
+Wants=graphical-session.target pipewire.service wireplumber.service touchscreen-bridge.service
+
+[Service]
+Type=simple
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=DISPLAY=:0
+Environment=OZONE_PLATFORM=wayland
+ExecStartPre=/usr/bin/test -S /run/user/1000/wayland-0
+ExecStartPre=/usr/bin/curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 --max-time 2 http://127.0.0.1:8765/
+ExecStart=/usr/bin/chromium \
+  --ozone-platform=wayland \
+  --user-data-dir=%h/.config/chromium-touchscreen \
+  --password-store=basic \
+  --app=http://127.0.0.1:8765 \
+  --kiosk \
+  --no-first-run \
+  --disable-extensions-except=%h/touchscreen-launcher/extension \
+  --load-extension=%h/touchscreen-launcher/extension \
+  --disable-component-update \
+  --disable-session-crashed-bubble \
+  --disable-infobars \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=9222 \
+  --autoplay-policy=no-user-gesture-required \
+  --unsafely-treat-insecure-origin-as-secure=http://192.168.86.24:18789 \
+  --use-fake-ui-for-media-stream
+Restart=always
+RestartSec=4
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dan.pi-touchscreen-voice-broker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/dan/.nvm/versions/node/v24.18.0/bin/node</string>
+    <string>--import</string>
+    <string>/Users/dan/openclaw/node_modules/tsx/dist/loader.mjs</string>
+    <string>/Users/dan/pi-touchscreen-launcher/broker/openclaw_voice_broker.ts</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/dan/openclaw</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/Users/dan</string>
+    <key>PATH</key>
+    <string>/Users/dan/.nvm/versions/node/v24.18.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>VOICE_BROKER_HOST</key>
+    <string>0.0.0.0</string>
+    <key>VOICE_BROKER_PORT</key>
+    <string>18890</string>
+    <key>VOICE_BROKER_ALLOWED_IPS</key>
+    <string>127.0.0.1,::1,192.168.86.232</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/dan/Library/Logs/pi-touchscreen-voice-broker.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/dan/Library/Logs/pi-touchscreen-voice-broker.error.log</string>
+</dict>
+</plist>

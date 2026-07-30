@@ -1,0 +1,20 @@
+[Unit]
+Description=Touchscreen launcher local bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=WAYLAND_DISPLAY=wayland-0
+EnvironmentFile=-%h/.config/touchscreen-launcher/environment
+ExecStart=/usr/bin/python3 %h/touchscreen-launcher/bridge/launcher_bridge.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target

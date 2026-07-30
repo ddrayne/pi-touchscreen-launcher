@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Touchscreen Launcher Return",
+  "version": "1.1.0",
+  "description": "Adds local home and offline wake controls to the Pi's OpenClaw surface.",
+  "background": {
+    "service_worker": "wake-bridge.js"
+  },
+  "host_permissions": [
+    "http://127.0.0.1:8765/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://192.168.86.24:18789/*"
+      ],
+      "js": [
+        "openclaw-home.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
