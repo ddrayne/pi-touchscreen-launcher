@@ -116,6 +116,7 @@ try {
             test.serverEvents.push(payload.type || "unknown");
             if (payload.type === "session.created") {
               test.turnDetection = payload.session?.audio?.input?.turn_detection ?? null;
+              test.sessionVoice = payload.session?.audio?.output?.voice ?? null;
             }
           } catch {}
         });
@@ -128,6 +129,7 @@ try {
       messageListeners: [],
       serverEvents: [],
       turnDetection: null,
+      sessionVoice: null,
     };
     return true;
   })()`);
@@ -251,6 +253,7 @@ try {
       (sender) => sender.track?.kind === "audio" && sender.track.enabled
     ),
     turnDetection: window.__touchscreenInterruptionTest.turnDetection,
+    sessionVoice: window.__touchscreenInterruptionTest.sessionVoice,
     eventCounts: window.__touchscreenInterruptionTest.serverEvents.reduce(
       (counts, type) => ({ ...counts, [type]: (counts[type] || 0) + 1 }),
       {},
@@ -263,6 +266,7 @@ try {
   assert.equal(summary.turnDetection?.silence_duration_ms, 650);
   assert.equal(summary.turnDetection?.prefix_padding_ms, 300);
   assert.equal(summary.turnDetection?.interrupt_response, true);
+  assert.equal(summary.sessionVoice, "marin");
   assert.ok(summary.eventCounts["output_audio_buffer.cleared"] >= 1);
 } finally {
   await evaluate(`(() => {

@@ -78,7 +78,7 @@ OpenClaw on the Mac is configured for:
 provider: openai
 model: gpt-realtime-2.1
 transport: webrtc
-voice: cedar
+voice: marin
 brain: agent-consult
 ```
 
