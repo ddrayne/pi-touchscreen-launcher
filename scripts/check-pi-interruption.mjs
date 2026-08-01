@@ -118,6 +118,20 @@ try {
               test.turnDetection = payload.session?.audio?.input?.turn_detection ?? null;
               test.sessionVoice = payload.session?.audio?.output?.voice ?? null;
             }
+            if (
+              payload.type === "conversation.output_transcript.delta" ||
+              payload.type === "response.audio_transcript.delta" ||
+              payload.type === "response.output_audio_transcript.delta"
+            ) {
+              requestAnimationFrame(() => {
+                const text = [...document.querySelectorAll(
+                  '.assistant__utterance[data-role="assistant"][data-streaming="true"] .assistant__utterance-copy',
+                )].at(-1)?.textContent || "";
+                if (text && test.streamSnapshots.at(-1) !== text) {
+                  test.streamSnapshots.push(text);
+                }
+              });
+            }
           } catch {}
         });
         return channel;
@@ -130,6 +144,7 @@ try {
       serverEvents: [],
       turnDetection: null,
       sessionVoice: null,
+      streamSnapshots: [],
     };
     return true;
   })()`);
@@ -254,6 +269,9 @@ try {
     ),
     turnDetection: window.__touchscreenInterruptionTest.turnDetection,
     sessionVoice: window.__touchscreenInterruptionTest.sessionVoice,
+    streamSamples: window.__touchscreenInterruptionTest.streamSnapshots
+      .filter((text) => text.length >= 12)
+      .slice(-8),
     eventCounts: window.__touchscreenInterruptionTest.serverEvents.reduce(
       (counts, type) => ({ ...counts, [type]: (counts[type] || 0) + 1 }),
       {},
@@ -267,6 +285,11 @@ try {
   assert.equal(summary.turnDetection?.prefix_padding_ms, 300);
   assert.equal(summary.turnDetection?.interrupt_response, true);
   assert.equal(summary.sessionVoice, "marin");
+  assert.ok(summary.streamSamples.some((text) => /\s/.test(text)));
+  assert.equal(
+    summary.streamSamples.some((text) => text.length >= 48 && !/\s/.test(text)),
+    false,
+  );
   assert.ok(summary.eventCounts["output_audio_buffer.cleared"] >= 1);
 } finally {
   await evaluate(`(() => {

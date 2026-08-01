@@ -637,6 +637,7 @@ button {
   color: rgba(24, 43, 37, 0.88);
   font-size: 0.98rem;
   line-height: 1.45;
+  overflow-wrap: anywhere;
   box-shadow: 0 8px 24px rgba(30, 48, 41, 0.06);
 }
 
@@ -653,7 +654,7 @@ button {
   animation: transcript-caret 0.85s ease-in-out infinite;
 }
 
-.assistant__utterance > span {
+.assistant__speaker {
   display: block;
   margin-bottom: 0.25rem;
   color: var(--sage);
@@ -663,8 +664,28 @@ button {
   text-transform: uppercase;
 }
 
-.assistant__utterance[data-role="user"] > span {
+.assistant__utterance[data-role="user"] .assistant__speaker {
   color: #b9d2c3;
+}
+
+.assistant__utterance-copy {
+  white-space: pre-wrap;
+}
+
+.assistant__stream-chunk {
+  animation: transcript-chunk 180ms ease-out both;
+}
+
+@keyframes transcript-chunk {
+  from {
+    opacity: 0.28;
+    filter: blur(1.2px);
+  }
+
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
 }
 
 @keyframes transcript-caret {

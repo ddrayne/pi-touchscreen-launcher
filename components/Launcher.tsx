@@ -51,6 +51,29 @@ type WakeStatus = {
   muted?: boolean;
 };
 
+function VoiceTranscriptText({ entry }: { entry: VoiceConversationEntry }) {
+  const settledLength =
+    entry.streaming && typeof entry.revealFrom === "number"
+      ? Math.min(entry.text.length, Math.max(0, entry.revealFrom))
+      : entry.text.length;
+  const settled = entry.text.slice(0, settledLength);
+  const arriving = entry.text.slice(settledLength);
+
+  return (
+    <span className="assistant__utterance-copy">
+      {settled}
+      {arriving ? (
+        <span
+          className="assistant__stream-chunk"
+          key={`${entry.text.length}:${arriving}`}
+        >
+          {arriving}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 type ShoppingItem = {
   id: string;
   text: string;
@@ -1388,8 +1411,10 @@ export function Launcher() {
                   data-streaming={entry.streaming}
                   key={entry.id}
                 >
-                  <span>{entry.role === "user" ? "You" : "Assistant"}</span>
-                  {entry.text}
+                  <span className="assistant__speaker">
+                    {entry.role === "user" ? "You" : "Assistant"}
+                  </span>
+                  <VoiceTranscriptText entry={entry} />
                 </p>
               ))}
             </div>

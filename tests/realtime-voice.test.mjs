@@ -107,6 +107,26 @@ test("merges final user text that arrives during assistant output", () => {
   ]);
 });
 
+test("preserves spaces between incremental transcript fragments", () => {
+  let entries = updateVoiceConversation([], {
+    id: "assistant-spaced",
+    role: "assistant",
+    text: "That",
+    final: false,
+  }, () => 1);
+  for (const text of [" sounds", " ", "much", " better."]) {
+    entries = updateVoiceConversation(entries, {
+      id: "assistant-spaced",
+      role: "assistant",
+      text,
+      final: false,
+    }, () => 2);
+  }
+
+  assert.equal(entries[0].text, "That sounds much better.");
+  assert.equal(entries[0].streaming, true);
+});
+
 test("reopens the microphone for a follow-up after response playback", async () => {
   const restoreWindow = installWindowShim();
   const statuses = [];

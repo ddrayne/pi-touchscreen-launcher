@@ -4,6 +4,7 @@ export type VoiceConversationEntry = {
   role: "user" | "assistant";
   text: string;
   streaming: boolean;
+  revealFrom?: number;
 };
 
 export type VoiceTranscriptUpdate = {
@@ -27,8 +28,6 @@ export function updateVoiceConversation(
   update: VoiceTranscriptUpdate,
   createId = () => Date.now() + Math.floor(Math.random() * 1000),
 ): VoiceConversationEntry[] {
-  const text = update.text.trimStart();
-  if (!text.trim()) return entries;
   const next = [...entries];
   let targetIndex = update.id
     ? next.findIndex((entry) => entry.transcriptId === update.id)
@@ -44,16 +43,25 @@ export function updateVoiceConversation(
     }
   }
 
+  // Realtime deltas are incremental and frequently begin with the space that
+  // belongs before the next word. Preserve that whitespace once a transcript
+  // exists; trimming every fragment briefly creates one long unbroken string.
+  const text = update.final ? update.text.trim() : update.text;
+  if (!text.trim() && (update.final || targetIndex < 0)) return entries;
+
   if (targetIndex >= 0) {
     const target = next[targetIndex];
+    const settledTarget = { ...target };
+    delete settledTarget.revealFrom;
     next[targetIndex] = {
-      ...target,
+      ...settledTarget,
       ...(update.id ? { transcriptId: update.id } : {}),
       // A completed transcript is authoritative. Replacing the streamed
       // fragments also repairs duplicate compatibility deltas. Realtime item
       // ids let late input finals merge even after assistant output has begun.
       text: update.final ? text : `${target.text}${text}`,
       streaming: !update.final,
+      ...(!update.final ? { revealFrom: target.text.length } : {}),
     };
   } else {
     if (update.final) {
@@ -68,8 +76,9 @@ export function updateVoiceConversation(
       id: createId(),
       ...(update.id ? { transcriptId: update.id } : {}),
       role: update.role,
-      text,
+      text: update.final ? text : text.trimStart(),
       streaming: !update.final,
+      ...(!update.final ? { revealFrom: 0 } : {}),
     });
   }
   return next.slice(-6);
