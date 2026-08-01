@@ -154,3 +154,54 @@ test("reopens the microphone for a follow-up after response playback", async () 
   voice.stop();
   restoreWindow();
 });
+
+test("opens a guarded barge-in window and waits for the interrupted turn", async () => {
+  const restoreWindow = installWindowShim();
+  const statuses = [];
+  const track = { enabled: true, stop: () => undefined };
+  const voice = new InlineRealtimeVoice({
+    onStatus: (status, detail) => statuses.push({ status, detail }),
+    onInputLevel: () => undefined,
+    onTranscript: () => undefined,
+  });
+
+  voice.media = {
+    getAudioTracks: () => [track],
+    getTracks: () => [track],
+  };
+  voice.meter = { stop: () => undefined };
+
+  voice.handleEvent(JSON.stringify({ type: "input_audio_buffer.speech_stopped" }));
+  voice.handleEvent(JSON.stringify({ type: "response.created" }));
+  voice.handleEvent(JSON.stringify({ type: "output_audio_buffer.started" }));
+  assert.equal(track.enabled, false);
+
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  assert.equal(track.enabled, true);
+  assert.equal(voice.turnLocked, true);
+
+  voice.handleEvent(JSON.stringify({ type: "input_audio_buffer.speech_started" }));
+  assert.equal(voice.turnLocked, false);
+  assert.equal(voice.interruptionPending, true);
+  assert.deepEqual(statuses.at(-1), {
+    status: "listening",
+    detail: "Go ahead — I’m listening",
+  });
+
+  voice.handleEvent(JSON.stringify({ type: "output_audio_buffer.cleared" }));
+  voice.handleEvent(JSON.stringify({ type: "response.cancelled" }));
+  assert.equal(track.enabled, true);
+  assert.equal(voice.turnLocked, false);
+
+  voice.handleEvent(JSON.stringify({ type: "input_audio_buffer.speech_stopped" }));
+  assert.equal(track.enabled, false);
+  assert.equal(voice.turnLocked, true);
+  assert.equal(voice.interruptionPending, true);
+
+  voice.handleEvent(JSON.stringify({ type: "response.created" }));
+  assert.equal(voice.interruptionPending, false);
+  assert.deepEqual(statuses.at(-1), { status: "thinking", detail: "Thinking" });
+
+  voice.stop();
+  restoreWindow();
+});

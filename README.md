@@ -63,6 +63,13 @@ page renders listening/thinking/speaking state and the live transcript itself.
 PipeWire device names replace fragile card indexes, and systemd owns
 startup/recovery.
 
+During a reply, the launcher opens a guarded barge-in window after the first
+650 ms of playback. OpenAI's WebRTC transport then cancels and truncates the
+unheard part of an interrupted reply before the replacement turn begins. The
+kiosk requests a `0.62` VAD threshold and `650 ms` silence duration so nearby
+speech remains responsive without treating ordinary room noise as eagerly as
+the provider defaults.
+
 ## Provider configuration
 
 OpenClaw on the Mac is configured for:

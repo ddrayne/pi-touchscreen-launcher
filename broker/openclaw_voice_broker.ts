@@ -39,6 +39,9 @@ const ALLOWED_IPS = new Set(
     .filter(Boolean),
 );
 const SESSION_KEY = "main";
+const TOUCHSCREEN_VAD_THRESHOLD = 0.62;
+const TOUCHSCREEN_VAD_SILENCE_MS = 650;
+const TOUCHSCREEN_VAD_PREFIX_MS = 300;
 const BODY_LIMIT = 128 * 1024;
 const CAMERA_BODY_LIMIT = 4 * 1024 * 1024;
 const TOOL_TIMEOUT_MS = 120_000;
@@ -1852,6 +1855,11 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   if (path === "/session") {
     const session = await requestGateway("talk.client.create", {
       sessionKey: SESSION_KEY,
+      // The kiosk microphone is close to a speaker and lives in a shared room.
+      // Bias VAD toward a nearby speaker while retaining a natural pause length.
+      vadThreshold: TOUCHSCREEN_VAD_THRESHOLD,
+      silenceDurationMs: TOUCHSCREEN_VAD_SILENCE_MS,
+      prefixPaddingMs: TOUCHSCREEN_VAD_PREFIX_MS,
     });
     sendJson(response, 200, session);
     return;

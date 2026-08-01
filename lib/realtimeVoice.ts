@@ -58,6 +58,7 @@ const MAX_UTTERANCE_MS = 15_000;
 const TURN_RESPONSE_TIMEOUT_MS = 8_000;
 const TURN_COMPLETE_DELAY_MS = 650;
 const RESPONSE_PLAYBACK_TIMEOUT_MS = 20_000;
+const BARGE_IN_GUARD_MS = 650;
 
 async function postJson<T>(
   path: string,
@@ -168,7 +169,10 @@ export class InlineRealtimeVoice {
   private sessionTimer = 0;
   private utteranceTimer = 0;
   private turnResumeTimer = 0;
+  private bargeInTimer = 0;
   private turnLocked = false;
+  private speechActive = false;
+  private interruptionPending = false;
   private outputAudioActive = false;
   private responseHasAssistantOutput = false;
   private responseCompleted = false;
@@ -288,6 +292,7 @@ export class InlineRealtimeVoice {
     window.clearTimeout(this.utteranceTimer);
     this.utteranceTimer = 0;
     this.clearTurnResume();
+    this.clearBargeInWindow();
     for (const controller of this.toolAborts) controller.abort();
     this.toolAborts.clear();
     this.channel?.close();
@@ -306,6 +311,8 @@ export class InlineRealtimeVoice {
     this.responseCreatePending = false;
     this.activeConsults = 0;
     this.turnLocked = false;
+    this.speechActive = false;
+    this.interruptionPending = false;
     this.outputAudioActive = false;
     this.responseHasAssistantOutput = false;
     this.responseCompleted = false;
@@ -391,26 +398,23 @@ export class InlineRealtimeVoice {
         return;
       case "input_audio_buffer.speech_started":
         this.clearIdleTimeout();
-        if (!this.turnLocked) {
-          window.clearTimeout(this.utteranceTimer);
-          this.utteranceTimer = window.setTimeout(
-            () => this.lockTurn(),
-            MAX_UTTERANCE_MS,
-          );
-        }
-        this.callbacks.onStatus("listening", "Speech detected");
+        this.beginSpeech();
         return;
       case "input_audio_buffer.speech_stopped":
         this.clearIdleTimeout();
+        this.speechActive = false;
         this.lockTurn();
         return;
       case "output_audio_buffer.started":
         this.outputAudioActive = true;
         this.clearIdleTimeout();
+        this.scheduleBargeInWindow();
         return;
       case "output_audio_buffer.stopped":
       case "output_audio_buffer.cleared":
         this.outputAudioActive = false;
+        this.clearBargeInWindow();
+        if (this.interruptionPending) return;
         if (this.turnLocked && this.responseCompleted && this.responseHasAssistantOutput) {
           this.scheduleTurnResume(TURN_COMPLETE_DELAY_MS);
         }
@@ -418,10 +422,12 @@ export class InlineRealtimeVoice {
       case "response.created":
         this.clearIdleTimeout();
         this.clearTurnResume();
+        this.clearBargeInWindow();
         this.responseActive = true;
         this.responseCompleted = false;
         this.responseHasAssistantOutput = false;
         this.responseCreateInFlight = false;
+        this.interruptionPending = false;
         this.callbacks.onStatus("thinking", "Thinking");
         return;
       case "response.cancelled":
@@ -430,6 +436,13 @@ export class InlineRealtimeVoice {
         this.responseCompleted = true;
         this.responseCreateInFlight = false;
         this.flushResponseCreate();
+        if (this.interruptionPending) {
+          this.callbacks.onStatus(
+            this.speechActive ? "listening" : "thinking",
+            this.speechActive ? "Go ahead — I’m listening" : "Thinking",
+          );
+          return;
+        }
         if (this.turnLocked && this.responseHasAssistantOutput) {
           if (this.outputAudioActive) {
             this.callbacks.onStatus("speaking", "Speaking");
@@ -606,22 +619,77 @@ export class InlineRealtimeVoice {
     this.turnResumeTimer = 0;
   }
 
+  private clearBargeInWindow(): void {
+    window.clearTimeout(this.bargeInTimer);
+    this.bargeInTimer = 0;
+  }
+
   private startInputMeter(): void {
     if (!this.media || this.meter) return;
     this.meter = new InputMeter(this.callbacks.onInputLevel);
     this.meter.start(this.media);
   }
 
+  private setMicrophoneEnabled(enabled: boolean): void {
+    this.media?.getAudioTracks().forEach((track) => {
+      track.enabled = enabled;
+    });
+    if (enabled) {
+      this.startInputMeter();
+      return;
+    }
+    this.meter?.stop();
+    this.meter = null;
+  }
+
+  private beginSpeech(): void {
+    const interruptingAssistant =
+      this.turnLocked && (this.responseActive || this.outputAudioActive);
+    const earlyFollowUp =
+      this.turnLocked && this.responseCompleted && this.responseHasAssistantOutput;
+
+    if (interruptingAssistant || earlyFollowUp) {
+      this.clearTurnResume();
+      this.clearBargeInWindow();
+      this.turnLocked = false;
+      this.interruptionPending = interruptingAssistant;
+      this.userTranscriptSeen = false;
+    } else if (this.turnLocked) {
+      return;
+    }
+
+    this.speechActive = true;
+    window.clearTimeout(this.utteranceTimer);
+    this.utteranceTimer = window.setTimeout(() => this.lockTurn(), MAX_UTTERANCE_MS);
+    this.callbacks.onStatus(
+      "listening",
+      interruptingAssistant ? "Go ahead — I’m listening" : "Speech detected",
+    );
+  }
+
+  private scheduleBargeInWindow(): void {
+    this.clearBargeInWindow();
+    this.bargeInTimer = window.setTimeout(() => {
+      this.bargeInTimer = 0;
+      if (
+        this.closed ||
+        !this.turnLocked ||
+        !this.outputAudioActive ||
+        this.interruptionPending
+      ) {
+        return;
+      }
+      this.setMicrophoneEnabled(true);
+    }, BARGE_IN_GUARD_MS);
+  }
+
   private lockTurn(): void {
     if (this.turnLocked) return;
     this.turnLocked = true;
+    this.speechActive = false;
     window.clearTimeout(this.utteranceTimer);
     this.utteranceTimer = 0;
-    this.media?.getAudioTracks().forEach((track) => {
-      track.enabled = false;
-    });
-    this.meter?.stop();
-    this.meter = null;
+    this.setMicrophoneEnabled(false);
     this.callbacks.onStatus("thinking", "Thinking");
     this.scheduleIdleTimeout(TURN_RESPONSE_TIMEOUT_MS);
   }
@@ -639,14 +707,13 @@ export class InlineRealtimeVoice {
     this.clearTurnResume();
     this.clearIdleTimeout();
     this.turnLocked = false;
+    this.speechActive = false;
+    this.interruptionPending = false;
     this.outputAudioActive = false;
     this.responseHasAssistantOutput = false;
     this.responseCompleted = false;
     this.userTranscriptSeen = false;
-    this.media?.getAudioTracks().forEach((track) => {
-      track.enabled = true;
-    });
-    this.startInputMeter();
+    this.setMicrophoneEnabled(true);
     this.callbacks.onStatus("listening", "I’m listening — ask a follow-up");
     this.scheduleIdleTimeout(FOLLOW_UP_IDLE_TIMEOUT_MS);
   }
