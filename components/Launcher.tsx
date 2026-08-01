@@ -12,8 +12,11 @@ import {
 import {
   InlineRealtimeVoice,
   type InlineVoiceStatus,
-  type InlineVoiceTranscript,
 } from "../lib/realtimeVoice";
+import {
+  updateVoiceConversation,
+  type VoiceConversationEntry,
+} from "../lib/voiceConversation";
 
 type WindowSpecies = {
   common_name: string;
@@ -46,13 +49,6 @@ type WakeStatus = {
   pending?: boolean;
   sequence?: number;
   muted?: boolean;
-};
-
-type ConversationEntry = {
-  id: number;
-  role: "user" | "assistant";
-  text: string;
-  streaming: boolean;
 };
 
 type ShoppingItem = {
@@ -357,35 +353,6 @@ function formatHubEventStart(start: string, allDay: boolean): string {
   }).format(date);
 }
 
-function updateConversation(
-  entries: ConversationEntry[],
-  update: InlineVoiceTranscript,
-): ConversationEntry[] {
-  const text = update.text;
-  if (!text.trim()) return entries;
-  const next = [...entries];
-  const last = next.at(-1);
-  if (last?.role === update.role && last.streaming) {
-    const merged = update.final
-      ? text.startsWith(last.text)
-        ? text
-        : last.text.toLowerCase().startsWith(text.toLowerCase().slice(0, 12))
-          ? text
-          : `${last.text}${text}`
-      : `${last.text}${text}`;
-    next[next.length - 1] = { ...last, text: merged, streaming: !update.final };
-  } else {
-    if (last?.streaming) next[next.length - 1] = { ...last, streaming: false };
-    next.push({
-      id: Date.now() + Math.floor(Math.random() * 1000),
-      role: update.role,
-      text: text.trimStart(),
-      streaming: !update.final,
-    });
-  }
-  return next.slice(-6);
-}
-
 export function Launcher() {
   const [now, setNow] = useState(() => new Date());
   const [status, setStatus] = useState<ApplianceStatus>({});
@@ -396,7 +363,7 @@ export function Launcher() {
   const [voiceState, setVoiceState] = useState<InlineVoiceStatus>("idle");
   const [voiceDetail, setVoiceDetail] = useState<string | null>(null);
   const [inputLevel, setInputLevel] = useState(0);
-  const [conversation, setConversation] = useState<ConversationEntry[]>([]);
+  const [conversation, setConversation] = useState<VoiceConversationEntry[]>([]);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraFrame, setCameraFrame] = useState(() => Date.now());
@@ -650,7 +617,7 @@ export function Launcher() {
       },
       onTranscript: (entry) => {
         if (voiceSession.current === session) {
-          setConversation((current) => updateConversation(current, entry));
+          setConversation((current) => updateVoiceConversation(current, entry));
         }
       },
       onToolResult: () => {

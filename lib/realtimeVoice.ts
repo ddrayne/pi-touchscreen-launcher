@@ -7,6 +7,7 @@ export type InlineVoiceStatus =
   | "error";
 
 export type InlineVoiceTranscript = {
+  id?: string;
   role: "user" | "assistant";
   text: string;
   final: boolean;
@@ -50,12 +51,13 @@ type ToolBuffer = {
 const CONSULT_TOOL = "openclaw_agent_consult";
 const CONTROL_TOOL = "openclaw_agent_control";
 const OFFER_TIMEOUT_MS = 30_000;
-const IDLE_TIMEOUT_MS = 12_000;
-const SESSION_TIMEOUT_MS = 45_000;
+const INITIAL_IDLE_TIMEOUT_MS = 15_000;
+const FOLLOW_UP_IDLE_TIMEOUT_MS = 20_000;
+const SESSION_TIMEOUT_MS = 180_000;
 const MAX_UTTERANCE_MS = 15_000;
 const TURN_RESPONSE_TIMEOUT_MS = 8_000;
-const TURN_COMPLETE_DELAY_MS = 900;
-const RESPONSE_PLAYBACK_TIMEOUT_MS = 12_000;
+const TURN_COMPLETE_DELAY_MS = 650;
+const RESPONSE_PLAYBACK_TIMEOUT_MS = 20_000;
 
 async function postJson<T>(
   path: string,
@@ -105,8 +107,11 @@ function errorDetail(error: unknown): string {
 class InputMeter {
   private context: AudioContext | null = null;
   private frame = 0;
+  private readonly onLevel: (level: number) => void;
 
-  constructor(private readonly onLevel: (level: number) => void) {}
+  constructor(onLevel: (level: number) => void) {
+    this.onLevel = onLevel;
+  }
 
   start(stream: MediaStream): void {
     const AudioContextClass =
@@ -162,6 +167,7 @@ export class InlineRealtimeVoice {
   private idleTimer = 0;
   private sessionTimer = 0;
   private utteranceTimer = 0;
+  private turnResumeTimer = 0;
   private turnLocked = false;
   private outputAudioActive = false;
   private responseHasAssistantOutput = false;
@@ -169,8 +175,11 @@ export class InlineRealtimeVoice {
   private userTranscriptSeen = false;
   private readonly toolAborts = new Set<AbortController>();
   private activeConsults = 0;
+  private readonly callbacks: InlineVoiceCallbacks;
 
-  constructor(private readonly callbacks: InlineVoiceCallbacks) {}
+  constructor(callbacks: InlineVoiceCallbacks) {
+    this.callbacks = callbacks;
+  }
 
   async start(): Promise<void> {
     if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === "undefined") {
@@ -211,8 +220,7 @@ export class InlineRealtimeVoice {
       return;
     }
     this.media = media;
-    this.meter = new InputMeter(this.callbacks.onInputLevel);
-    this.meter.start(media);
+    this.startInputMeter();
     for (const track of media.getAudioTracks()) peer.addTrack(track, media);
 
     const channel = peer.createDataChannel("oai-events");
@@ -221,7 +229,7 @@ export class InlineRealtimeVoice {
     channel.addEventListener("open", () => {
       if (this.closed) return;
       this.callbacks.onStatus("listening", "I’m listening");
-      this.scheduleIdleTimeout();
+      this.scheduleIdleTimeout(INITIAL_IDLE_TIMEOUT_MS);
       this.sessionTimer = window.setTimeout(
         () => this.callbacks.onIdleTimeout?.(),
         SESSION_TIMEOUT_MS,
@@ -279,6 +287,7 @@ export class InlineRealtimeVoice {
     this.sessionTimer = 0;
     window.clearTimeout(this.utteranceTimer);
     this.utteranceTimer = 0;
+    this.clearTurnResume();
     for (const controller of this.toolAborts) controller.abort();
     this.toolAborts.clear();
     this.channel?.close();
@@ -325,6 +334,7 @@ export class InlineRealtimeVoice {
         if (event.delta) {
           this.userTranscriptSeen = true;
           this.callbacks.onTranscript({
+            id: event.item_id,
             role: "user",
             text: event.delta,
             final: false,
@@ -335,6 +345,7 @@ export class InlineRealtimeVoice {
         if (event.transcript) {
           this.userTranscriptSeen = true;
           this.callbacks.onTranscript({
+            id: event.item_id,
             role: "user",
             text: event.transcript,
             final: true,
@@ -351,6 +362,7 @@ export class InlineRealtimeVoice {
           this.responseHasAssistantOutput = true;
           this.callbacks.onStatus("speaking", "Speaking");
           this.callbacks.onTranscript({
+            id: event.item_id,
             role: "assistant",
             text: event.delta,
             final: false,
@@ -361,7 +373,14 @@ export class InlineRealtimeVoice {
       case "response.audio_transcript.done":
       case "response.output_audio_transcript.done": {
         const text = event.transcript || event.text;
-        if (text) this.callbacks.onTranscript({ role: "assistant", text, final: true });
+        if (text) {
+          this.callbacks.onTranscript({
+            id: event.item_id,
+            role: "assistant",
+            text,
+            final: true,
+          });
+        }
         return;
       }
       case "response.function_call_arguments.delta":
@@ -393,11 +412,12 @@ export class InlineRealtimeVoice {
       case "output_audio_buffer.cleared":
         this.outputAudioActive = false;
         if (this.turnLocked && this.responseCompleted && this.responseHasAssistantOutput) {
-          this.scheduleIdleTimeout(TURN_COMPLETE_DELAY_MS);
+          this.scheduleTurnResume(TURN_COMPLETE_DELAY_MS);
         }
         return;
       case "response.created":
         this.clearIdleTimeout();
+        this.clearTurnResume();
         this.responseActive = true;
         this.responseCompleted = false;
         this.responseHasAssistantOutput = false;
@@ -409,18 +429,23 @@ export class InlineRealtimeVoice {
         this.responseActive = false;
         this.responseCompleted = true;
         this.responseCreateInFlight = false;
-        this.callbacks.onStatus("listening", "I’m listening");
         this.flushResponseCreate();
         if (this.turnLocked && this.responseHasAssistantOutput) {
+          if (this.outputAudioActive) {
+            this.callbacks.onStatus("speaking", "Speaking");
+          }
           if (!this.outputAudioActive) {
-            this.scheduleIdleTimeout(TURN_COMPLETE_DELAY_MS);
+            this.scheduleTurnResume(TURN_COMPLETE_DELAY_MS);
           } else {
-            this.scheduleIdleTimeout(RESPONSE_PLAYBACK_TIMEOUT_MS);
+            this.scheduleTurnResume(RESPONSE_PLAYBACK_TIMEOUT_MS);
           }
         } else if (this.turnLocked && event.type === "response.cancelled") {
-          this.scheduleIdleTimeout(TURN_COMPLETE_DELAY_MS);
+          this.scheduleTurnResume(TURN_COMPLETE_DELAY_MS);
+        } else if (this.turnLocked && this.activeConsults === 0) {
+          this.scheduleTurnResume(TURN_COMPLETE_DELAY_MS);
         } else {
-          this.scheduleIdleTimeout();
+          this.callbacks.onStatus("listening", "I’m listening");
+          this.scheduleIdleTimeout(FOLLOW_UP_IDLE_TIMEOUT_MS);
         }
         return;
       case "error":
@@ -464,6 +489,7 @@ export class InlineRealtimeVoice {
       if (inferredUserText.trim()) {
         this.userTranscriptSeen = true;
         this.callbacks.onTranscript({
+          id: `tool-user:${callId}`,
           role: "user",
           text: inferredUserText.trim(),
           final: true,
@@ -575,6 +601,17 @@ export class InlineRealtimeVoice {
     this.idleTimer = 0;
   }
 
+  private clearTurnResume(): void {
+    window.clearTimeout(this.turnResumeTimer);
+    this.turnResumeTimer = 0;
+  }
+
+  private startInputMeter(): void {
+    if (!this.media || this.meter) return;
+    this.meter = new InputMeter(this.callbacks.onInputLevel);
+    this.meter.start(this.media);
+  }
+
   private lockTurn(): void {
     if (this.turnLocked) return;
     this.turnLocked = true;
@@ -589,7 +626,40 @@ export class InlineRealtimeVoice {
     this.scheduleIdleTimeout(TURN_RESPONSE_TIMEOUT_MS);
   }
 
-  private scheduleIdleTimeout(delay = IDLE_TIMEOUT_MS): void {
+  private resumeListening(): void {
+    if (
+      this.closed ||
+      this.responseActive ||
+      this.responseCreateInFlight ||
+      this.responseCreatePending ||
+      this.activeConsults > 0
+    ) {
+      return;
+    }
+    this.clearTurnResume();
+    this.clearIdleTimeout();
+    this.turnLocked = false;
+    this.outputAudioActive = false;
+    this.responseHasAssistantOutput = false;
+    this.responseCompleted = false;
+    this.userTranscriptSeen = false;
+    this.media?.getAudioTracks().forEach((track) => {
+      track.enabled = true;
+    });
+    this.startInputMeter();
+    this.callbacks.onStatus("listening", "I’m listening — ask a follow-up");
+    this.scheduleIdleTimeout(FOLLOW_UP_IDLE_TIMEOUT_MS);
+  }
+
+  private scheduleTurnResume(delay: number): void {
+    this.clearTurnResume();
+    this.turnResumeTimer = window.setTimeout(() => {
+      this.turnResumeTimer = 0;
+      this.resumeListening();
+    }, delay);
+  }
+
+  private scheduleIdleTimeout(delay: number): void {
     this.clearIdleTimeout();
     this.idleTimer = window.setTimeout(() => {
       this.idleTimer = 0;

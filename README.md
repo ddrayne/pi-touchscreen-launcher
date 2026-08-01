@@ -248,12 +248,12 @@ the assistant's own speaker does not wake it again. `-ds 2` reduces continuous
 decoder CPU without losing either reference detection. Touching the orb remains
 the deterministic fallback.
 
-Voice sessions are deliberately turn-based for an unattended home screen. The
-launcher accepts one utterance, locks the microphone when server VAD marks the
-turn complete, plays one answer, and returns home. It also closes after 12
-seconds without a turn, forcibly caps a continuous utterance at 15 seconds,
-and enforces a 45-second session ceiling so background conversation cannot
-keep it listening indefinitely.
+Voice sessions keep one stateful Realtime conversation open for natural
+follow-ups. The launcher locks the microphone while each answer is prepared and
+played, then returns to listening for 20 seconds without requiring the wake word
+again. It closes after 15 seconds when no first turn begins, forcibly caps a
+continuous utterance at 15 seconds, and enforces a three-minute session ceiling
+so background conversation cannot keep it listening indefinitely.
 
 If the OpenAI project does not permit a separate input-transcription model, the
 launcher can still show the user turn inferred from OpenClaw consult/control
@@ -305,10 +305,13 @@ With an SSH tunnel from local port `9223` to Chromium’s loopback debugger:
 ```bash
 node scripts/check-pi-media.mjs
 node scripts/inspect-pi-talk.mjs
+node scripts/check-pi-conversation.mjs
 TOUCHSCREEN_NO_ACTION=1 node scripts/inspect-pi-talk.mjs
 ```
 
 The media check stops any paid Realtime session first, returns to Home, measures
 real microphone samples, decodes a native camera frame, and renders a short
 low-volume speaker tone. The Talk inspector verifies the actual OpenClaw
-WebRTC request and UI state.
+WebRTC request and UI state. The conversation check runs two bounded text turns
+through the live kiosk data channel and verifies transcript identity, response
+playback, and the follow-up listening window before ending the session.
