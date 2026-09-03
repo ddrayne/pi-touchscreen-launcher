@@ -38,7 +38,7 @@ const ALLOWED_IPS = new Set(
     .map((entry) => entry.trim())
     .filter(Boolean),
 );
-const SESSION_KEY = "main";
+const SESSION_KEY = "agent:main:main";
 const TOUCHSCREEN_VAD_THRESHOLD = 0.62;
 const TOUCHSCREEN_VAD_SILENCE_MS = 650;
 const TOUCHSCREEN_VAD_PREFIX_MS = 300;
@@ -1553,16 +1553,17 @@ async function connectGateway(): Promise<void> {
   const bootstrap = await resolveGatewayClientBootstrap({ config });
   gateway = new GatewayClient({
     url: bootstrap.url,
-    origin: "http://127.0.0.1:18789",
     token: bootstrap.auth.token,
     password: bootstrap.auth.password,
     preauthHandshakeTimeoutMs: bootstrap.preauthHandshakeTimeoutMs,
     instanceId: randomUUID(),
-    clientName: GATEWAY_CLIENT_NAMES.CONTROL_UI,
+    // This is a persistent headless broker, not the browser control UI.
+    // Advertising the UI identity makes the gateway enforce bundled UI build IDs.
+    clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
     clientDisplayName: "Pi touchscreen voice broker",
     clientVersion: "1.0.0",
     platform: process.platform,
-    mode: GATEWAY_CLIENT_MODES.WEBCHAT,
+    mode: GATEWAY_CLIENT_MODES.BACKEND,
     role: "operator",
     scopes: [...CLI_DEFAULT_OPERATOR_SCOPES],
     onEvent: handleGatewayEvent,
