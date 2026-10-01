@@ -137,6 +137,24 @@ test("lets a ringing timer go when it is silenced, but not when a reply ends", (
   assert.equal(midReply.timers[0].ringing, true);
 });
 
+test("ignores the timer state LVA replays to a new client", () => {
+  const ring = { id: "a", name: "pasta", total_seconds: 600, seconds_left: 0 };
+  const connected = reduceLva(initialLvaState, { event: "snapshot", data: {} }, 10_000);
+  const replayed = reduceLva(connected, { event: "timer_ringing", data: ring }, 10_020);
+  assert.deepEqual(replayed.timers, [], "a ring LVA may have stopped by itself hours ago");
+  const live = reduceLva(replayed, { event: "timer_ringing", data: ring }, 10_040);
+  assert.equal(live.timers[0].ringing, true, "only the replay is ignored");
+
+  const muted = reduceLva(connected, { event: "muted", data: { muted: true } }, 10_020);
+  assert.equal(muted.muted, true, "other replayed state still applies");
+  const later = reduceLva(
+    connected,
+    { event: "timer_ticking", data: { id: "b", name: "", total_seconds: 60, seconds_left: 60 } },
+    20_000,
+  );
+  assert.equal(later.timers.length, 1, "with nothing replayed, the next timer is live");
+});
+
 test("lets go of timers and conversations LVA stopped reporting", () => {
   const timers = replay([
     { event: "timer_ringing", data: { id: "a", name: "", total_seconds: 60, seconds_left: 0 } },
@@ -177,7 +195,7 @@ const window = [
 ];
 
 test("picks the latest reliable bird and the ones heard before it", () => {
-  const summary = summariseGarden({
+  const payload = {
     now: "13:10:00",
     latest: { common_name: "Robin", scientific_name: "Erithacus rubecula", at: "13:09:20", seconds_ago: 40, tier: "confirmed" },
     feed: [
@@ -190,7 +208,8 @@ test("picks the latest reliable bird and the ones heard before it", () => {
     window_species: window,
     today_species_count: 11,
     new_today: ["Robin"],
-  });
+  };
+  const summary = summariseGarden(payload);
   assert.equal(summary.hero.commonName, "Robin");
   assert.equal(summary.hero.label, "Singing now");
   assert.equal(summary.hero.clipPath, "/api/birdframe/clip/2026-10-06/Robin");
@@ -199,6 +218,10 @@ test("picks the latest reliable bird and the ones heard before it", () => {
   assert.deepEqual(summary.earlier, ["Wren", "Eurasian Blackbird"], "no tentative birds, no repeats");
   assert.equal(summary.voicesToday, 11);
   assert.equal(summary.quiet, false);
+
+  // BirdFrame stopped answering ten minutes ago: the robin isn't singing now.
+  assert.equal(summariseGarden(payload, 600).hero.label, "Heard 11 minutes ago");
+  assert.equal(summariseGarden(payload, 4 * 3600).quiet, true);
 });
 
 test("skips a tentative latest detection and falls back to the feed", () => {

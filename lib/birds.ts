@@ -113,7 +113,15 @@ export function photoPathFor(scientificName: string): string {
   return `/api/birds/photo?name=${encodeURIComponent(scientificName)}`;
 }
 
-export function summariseGarden(payload: BirdframeNow | null | undefined): GardenSummary {
+/**
+ * `ageSeconds` is how long ago BirdFrame answered, so a garden that can no
+ * longer be reached grows older on screen instead of singing forever.
+ */
+export function summariseGarden(
+  payload: BirdframeNow | null | undefined,
+  ageSeconds = 0,
+): GardenSummary {
+  const age = Math.max(0, ageSeconds);
   const windowSpecies = payload?.window_species ?? [];
   const tierByName = new Map(
     windowSpecies.map((species) => [species.scientific_name, species.tier]),
@@ -142,7 +150,8 @@ export function summariseGarden(payload: BirdframeNow | null | undefined): Garde
         })();
 
   if (candidate) {
-    const { detection, tier, secondsAgo } = candidate;
+    const { detection, tier } = candidate;
+    const secondsAgo = candidate.secondsAgo === null ? null : candidate.secondsAgo + age;
     const { freshness, label } = describeFreshness(
       secondsAgo,
       detection.at ?? detection.timestamp,

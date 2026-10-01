@@ -50,16 +50,18 @@ export function useRecent(at: number, windowMs: number): boolean {
 
 /**
  * Fetch JSON now and on an interval, keeping the last good value through
- * failures. Changing `refreshKey` (for example on waking) fetches again.
+ * failures; `updatedAt` says how old it is. Changing `refreshKey` (for
+ * example on waking) fetches again.
  */
 export function usePolledJson<T>(
   url: string,
   intervalMs: number,
   refreshKey: string,
-): { data: T | null; failed: boolean } {
-  const [state, setState] = useState<{ data: T | null; failed: boolean }>({
+): { data: T | null; failed: boolean; updatedAt: number } {
+  const [state, setState] = useState<{ data: T | null; failed: boolean; updatedAt: number }>({
     data: null,
     failed: false,
+    updatedAt: 0,
   });
   useEffect(() => {
     let cancelled = false;
@@ -68,7 +70,7 @@ export function usePolledJson<T>(
         const response = await fetch(url, { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = (await response.json()) as T;
-        if (!cancelled) setState({ data, failed: false });
+        if (!cancelled) setState({ data, failed: false, updatedAt: Date.now() });
       } catch {
         if (!cancelled) setState((current) => ({ ...current, failed: true }));
       }
@@ -97,7 +99,9 @@ export function useHomeEvents(): {
   }>({ presence: null, media: null, connected: false });
 
   useEffect(() => {
-    const events = new EventSource("/api/home/events");
+    let events: EventSource | null = null;
+    let retry: number | undefined;
+    let delay = 2_000;
     const read = (event: Event) => {
       try {
         return JSON.parse((event as MessageEvent<string>).data) as Record<string, unknown>;
@@ -105,25 +109,48 @@ export function useHomeEvents(): {
         return null;
       }
     };
-    events.addEventListener("snapshot", (event) => {
-      const data = read(event);
-      if (!data) return;
-      setState({
-        presence: (data.presence as PresenceSnapshot) ?? null,
-        media: (data.media as MediaSnapshot) ?? null,
-        connected: true,
+    const connect = () => {
+      const source = new EventSource("/api/home/events");
+      events = source;
+      source.addEventListener("snapshot", (event) => {
+        const data = read(event);
+        if (!data) return;
+        delay = 2_000;
+        setState({
+          presence: (data.presence as PresenceSnapshot) ?? null,
+          media: (data.media as MediaSnapshot) ?? null,
+          connected: true,
+        });
       });
-    });
-    events.addEventListener("presence", (event) => {
-      const data = read(event);
-      if (data) setState((current) => ({ ...current, presence: data as PresenceSnapshot }));
-    });
-    events.addEventListener("media", (event) => {
-      const data = read(event);
-      if (data) setState((current) => ({ ...current, media: data as MediaSnapshot }));
-    });
-    events.onerror = () => setState((current) => ({ ...current, connected: false }));
-    return () => events.close();
+      source.addEventListener("presence", (event) => {
+        const data = read(event);
+        if (data) {
+          setState((current) => ({ ...current, presence: data as PresenceSnapshot, connected: true }));
+        }
+      });
+      source.addEventListener("media", (event) => {
+        const data = read(event);
+        if (data) setState((current) => ({ ...current, media: data as MediaSnapshot }));
+      });
+      // The broker can't reach Home Assistant, so nothing it knew is current.
+      source.addEventListener("unavailable", () => {
+        setState({ presence: null, media: null, connected: false });
+      });
+      source.onerror = () => {
+        setState((current) => ({ ...current, connected: false }));
+        // The browser retries a dropped stream by itself, but an error
+        // response (the broker unreachable) closes an EventSource for good.
+        if (source.readyState === EventSource.CLOSED) {
+          retry = window.setTimeout(connect, delay);
+          delay = Math.min(delay * 2, 30_000);
+        }
+      };
+    };
+    connect();
+    return () => {
+      window.clearTimeout(retry);
+      events?.close();
+    };
   }, []);
 
   return state;
@@ -171,18 +198,45 @@ export function useLva(url: string): {
   return { state, send, dismiss };
 }
 
-/** Ask the bridge to power the backlight down while the kitchen is empty. */
-export function useDisplaySleep(asleep: boolean): void {
-  const last = useRef<boolean | null>(null);
+/**
+ * Ask the bridge to power the backlight down while the kitchen is empty, and
+ * keep asking until it confirms: a dark panel the screen believes is awake
+ * would never wake again. A change of `nudge` (a touch) retries at once.
+ */
+export function useDisplaySleep(asleep: boolean, nudge: number): void {
+  const confirmed = useRef<boolean | null>(null);
   useEffect(() => {
-    if (last.current === asleep) return;
-    last.current = asleep;
-    void fetch("/api/display", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ awake: !asleep }),
-    }).catch(() => undefined);
-  }, [asleep]);
+    if (confirmed.current === asleep) return;
+    let cancelled = false;
+    let retry: number | undefined;
+    const attempt = async (delay: number) => {
+      try {
+        const response = await fetch("/api/display", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ awake: !asleep }),
+        });
+        const result = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          supported?: boolean;
+        };
+        if (cancelled) return;
+        // No backlight to control is an answer too: retrying can't change it.
+        if (response.ok && (result.ok === true || result.supported === false)) {
+          confirmed.current = asleep;
+          return;
+        }
+      } catch {
+        if (cancelled) return;
+      }
+      retry = window.setTimeout(() => void attempt(Math.min(delay * 2, 30_000)), delay);
+    };
+    void attempt(2_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retry);
+    };
+  }, [asleep, nudge]);
 }
 
 /** Plays BirdFrame's recordings, one at a time. */

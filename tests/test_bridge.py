@@ -6,6 +6,7 @@ import importlib.util
 import json
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -40,6 +41,12 @@ class FakeUpstream(BaseHTTPRequestHandler):
             self.reply(200, "text/html", b"<html>")
         elif self.path == "/health":
             self.reply(200, "application/json", b'{"ok":true}')
+        elif self.path == "/home/events":
+            # One event, then the broker goes away, as it does when it restarts.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(b'event: snapshot\ndata: {"presence":null}\n\n')
         else:
             self.reply(404, "application/json", b'{"error":"missing"}')
 
@@ -82,7 +89,9 @@ class HelperTests(unittest.TestCase):
     def test_backlight_powers_down_and_up(self):
         with tempfile.TemporaryDirectory() as root:
             bridge.BACKLIGHT_ROOT = Path(root)
-            self.assertFalse(bridge.set_display_awake(False)["ok"], "no device found")
+            missing = bridge.set_display_awake(False)
+            self.assertFalse(missing["ok"], "no device found")
+            self.assertIs(missing["supported"], False, "so the screen stops retrying")
             device = Path(root) / "11-0045"
             device.mkdir()
             (device / "brightness").write_text("200")
@@ -107,7 +116,7 @@ class HelperTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as root:
                 bridge.PHOTO_CACHE_DIR = Path(root)
-                bridge.PHOTO_MISSES.clear()
+                bridge.PHOTO_RETRY_AT.clear()
                 bridge.MEMORY_PHOTOS.clear()
                 self.assertEqual(bridge.bird_photo("Turdus merula"), ("image/jpeg", b"jpeg-bytes"))
                 self.assertTrue((Path(root) / "turdus-merula.jpg").exists())
@@ -115,6 +124,24 @@ class HelperTests(unittest.TestCase):
                 self.assertIsNone(bridge.bird_photo("Avis imaginaria"))
                 self.assertIsNone(bridge.bird_photo("Avis imaginaria"))
                 self.assertEqual(calls, ["Turdus merula", "Avis imaginaria"])
+        finally:
+            bridge.fetch_bird_photo = original
+
+
+    def test_network_errors_retry_sooner_than_missing_photos(self):
+        def unreachable(name):
+            raise urllib.error.URLError("offline")
+
+        original = bridge.fetch_bird_photo
+        bridge.fetch_bird_photo = unreachable
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                bridge.PHOTO_CACHE_DIR = Path(root)
+                bridge.PHOTO_RETRY_AT.clear()
+                bridge.MEMORY_PHOTOS.clear()
+                self.assertIsNone(bridge.bird_photo("Turdus merula"))
+                wait = bridge.PHOTO_RETRY_AT["turdus-merula"] - time.monotonic()
+                self.assertLessEqual(wait, bridge.PHOTO_NETWORK_RETRY_SECONDS)
         finally:
             bridge.fetch_bird_photo = original
 
@@ -181,6 +208,13 @@ class RequestTests(unittest.TestCase):
         self.assertEqual((status, body["echo"]), (200, "/media/control"))
         self.assertEqual(self.post("/api/voice/session", {})[0], 404, "V1 voice routes are gone")
         self.assertEqual(self.post("/api/display", {"awake": "yes"})[0], 400)
+
+    def test_event_streams_end_when_the_broker_goes_away(self):
+        # The browser only reconnects once the stream has really ended.
+        with urllib.request.urlopen(self.base + "/api/home/events", timeout=5) as response:
+            self.assertEqual(response.headers.get_content_type(), "text/event-stream")
+            body = response.read()
+        self.assertIn(b"event: snapshot", body)
 
     def test_serves_the_screen_for_unknown_paths(self):
         status, content_type, body = self.get("/somewhere?x=1")

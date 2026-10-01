@@ -53,12 +53,20 @@ export function KitchenScreen() {
     voiceActive,
     sleepAfterMs: SLEEP_AFTER_MS,
   });
-  useDisplaySleep(asleep);
+  useDisplaySleep(asleep, lastTouchAt);
 
   const refreshKey = asleep ? "asleep" : "awake";
   const garden = usePolledJson<BirdframeNow>("/api/birdframe", 20_000, refreshKey);
   const weather = usePolledJson<WeatherSnapshot>("/api/weather", 10 * 60_000, refreshKey);
-  const summary = useMemo(() => summariseGarden(garden.data), [garden.data]);
+  // Aged by BirdFrame's silence, so an unreachable garden doesn't sing forever.
+  const summary = useMemo(
+    () =>
+      summariseGarden(
+        garden.data,
+        garden.updatedAt ? (now.getTime() - garden.updatedAt) / 1000 : 0,
+      ),
+    [garden.data, garden.updatedAt, now],
+  );
   const hours = useMemo(
     () => upcomingHours(weather.data?.hours ?? [], now),
     [now, weather.data],

@@ -10,6 +10,7 @@ and switches between the screen and BirdFrame's own display window.
 
 from __future__ import annotations
 
+import http.client
 import json
 import mimetypes
 import os
@@ -73,8 +74,10 @@ PHOTO_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 PHOTO_LIMIT = 3 * 1024 * 1024
 CLIP_LIMIT = 8 * 1024 * 1024
 PHOTO_RETRY_SECONDS = 6 * 3600
+# Wikipedia unreachable, rather than without a photo: try again sooner.
+PHOTO_NETWORK_RETRY_SECONDS = 5 * 60
 PHOTO_LOCK = threading.Lock()
-PHOTO_MISSES: dict[str, float] = {}
+PHOTO_RETRY_AT: dict[str, float] = {}
 MEMORY_PHOTOS: dict[str, tuple[str, bytes]] = {}
 
 
@@ -216,13 +219,17 @@ def fetch_bird_photo(name: str) -> tuple[str, bytes] | None:
         "https://upload.wikimedia.org/"
     ):
         return None
+    failure: Exception | None = None
     for candidate in dict.fromkeys([larger_thumbnail(source), source]):
         try:
             photo = read_image(candidate)
-        except (OSError, urllib.error.URLError):
+        except (OSError, http.client.HTTPException) as error:
+            failure = error
             continue
         if photo:
             return photo
+    if failure is not None:
+        raise failure
     return None
 
 
@@ -257,18 +264,25 @@ def bird_photo(name: str) -> tuple[str, bytes] | None:
         cached = cached_photo(slug)
         if cached:
             return cached
-        missed_at = PHOTO_MISSES.get(slug)
-        if missed_at is not None and time.monotonic() - missed_at < PHOTO_RETRY_SECONDS:
+        retry_at = PHOTO_RETRY_AT.get(slug)
+        if retry_at is not None and time.monotonic() < retry_at:
             return None
+    retry_after = PHOTO_RETRY_SECONDS
     try:
         photo = fetch_bird_photo(name)
-    except (OSError, ValueError, urllib.error.URLError):
+    except urllib.error.HTTPError as error:
         photo = None
+        if error.code != HTTPStatus.NOT_FOUND:
+            retry_after = PHOTO_NETWORK_RETRY_SECONDS
+    except (OSError, ValueError, http.client.HTTPException):
+        photo = None
+        retry_after = PHOTO_NETWORK_RETRY_SECONDS
     with PHOTO_LOCK:
         if photo:
             store_photo(slug, *photo)
+            PHOTO_RETRY_AT.pop(slug, None)
         else:
-            PHOTO_MISSES[slug] = time.monotonic()
+            PHOTO_RETRY_AT[slug] = time.monotonic() + retry_after
     return photo
 
 
@@ -284,11 +298,22 @@ def backlight_device() -> Path | None:
 
 def set_display_awake(awake: bool) -> dict[str, Any]:
     """Power the panel's backlight down while the kitchen is empty."""
+    # "supported": False tells the screen that retrying cannot help.
     if not DISPLAY_SLEEP:
-        return {"ok": False, "awake": awake, "detail": "Display sleep is disabled"}
+        return {
+            "ok": False,
+            "supported": False,
+            "awake": awake,
+            "detail": "Display sleep is disabled",
+        }
     device = backlight_device()
     if device is None:
-        return {"ok": False, "awake": awake, "detail": "No backlight control found"}
+        return {
+            "ok": False,
+            "supported": False,
+            "awake": awake,
+            "detail": "No backlight control found",
+        }
     try:
         power = device / "bl_power"
         if power.exists():
@@ -414,7 +439,9 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "text/event-stream; charset=utf-8")
                 self.send_header("Cache-Control", "no-store, no-transform")
-                self.send_header("Connection", "keep-alive")
+                # The stream has no length, so only closing the connection ends
+                # it, and that end is what makes the browser reconnect.
+                self.send_header("Connection", "close")
                 self.send_header("X-Accel-Buffering", "no")
                 self.end_headers()
                 headers_sent = True
@@ -424,17 +451,13 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                         break
                     self.wfile.write(line)
                     self.wfile.flush()
-        except (
-            BrokenPipeError,
-            ConnectionResetError,
-            TimeoutError,
-            urllib.error.URLError,
-        ) as error:
+        except (OSError, http.client.HTTPException) as error:
             if not headers_sent:
                 self.send_json(
                     {"error": "Live updates are unavailable", "detail": str(error)},
                     HTTPStatus.BAD_GATEWAY,
                 )
+        finally:
             self.close_connection = True
 
     def proxy_broker_write(self, method: str, broker_path: str, body_limit: int) -> None:

@@ -36,6 +36,8 @@ export type LvaState = {
   /** Epoch milliseconds of the latest voice pipeline event. */
   activityAt: number;
   timers: LvaTimer[];
+  /** Until when the next event may be LVA replaying its last state on connect. */
+  replayUntil: number;
 };
 
 export type LvaMessage = {
@@ -53,6 +55,7 @@ export const initialLvaState: LvaState = {
   muted: false,
   activityAt: 0,
   timers: [],
+  replayUntil: 0,
 };
 
 type Record_ = Record<string, unknown>;
@@ -94,6 +97,8 @@ function readTimer(data: Record_, now: number, ringing: boolean): LvaTimer | nul
 export const TIMER_RING_LIMIT_MS = 15 * 60_000;
 /** A pipeline that has gone this long without an event has stalled. */
 const VOICE_STALL_MS = 2 * 60_000;
+/** LVA sends its replay straight after the snapshot. */
+const REPLAY_WINDOW_MS = 1_500;
 
 function withoutRinging(timers: LvaTimer[]): LvaTimer[] {
   return timers.some((timer) => timer.ringing) ? timers.filter((timer) => !timer.ringing) : timers;
@@ -116,9 +121,18 @@ function upsertTimer(timers: LvaTimer[], timer: LvaTimer): LvaTimer[] {
  * bare `idle` outside any conversation. An `idle` that ends a conversation is
  * left alone, because a timer that went off mid-reply is still ringing.
  */
-export function reduceLva(state: LvaState, message: LvaMessage, now: number): LvaState {
+export function reduceLva(current: LvaState, message: LvaMessage, now: number): LvaState {
   const event = typeof message.event === "string" ? message.event : "";
   const data = asRecord(message.data);
+  let state = current;
+  if (state.replayUntil && event !== "snapshot") {
+    const replayed = now <= state.replayUntil;
+    state = { ...state, replayUntil: 0 };
+    // A new client is sent LVA's last state event with the data it had then:
+    // a countdown that has since moved on, or a ring LVA has since stopped by
+    // itself. Neither is worth showing.
+    if (replayed && event.startsWith("timer_")) return state;
+  }
   switch (event) {
     case "snapshot":
       return {
@@ -127,6 +141,7 @@ export function reduceLva(state: LvaState, message: LvaMessage, now: number): Lv
         homeAssistantConnected: data.ha_connected !== false,
         heard: cleanText(data.last_stt_text) ?? state.heard,
         reply: cleanText(data.last_tts_text) ?? state.reply,
+        replayUntil: now + REPLAY_WINDOW_MS,
       };
     case "wake_word_detected":
       return {
@@ -194,7 +209,7 @@ export function reduceLvaConnection(state: LvaState, connected: boolean): LvaSta
   if (state.connected === connected) return state;
   return connected
     ? { ...state, connected: true }
-    : { ...state, connected: false, homeAssistantConnected: false, phase: "idle" };
+    : { ...state, connected: false, homeAssistantConnected: false, phase: "idle", replayUntil: 0 };
 }
 
 /** Drop a timer locally once the user has dismissed it. */

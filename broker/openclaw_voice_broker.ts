@@ -1453,6 +1453,8 @@ function connectHomeAssistantEvents(): void {
         }),
       );
       console.log("Home Assistant shopping and household events connected");
+      // Presence and media may have changed while the socket was down.
+      refreshHomeClients();
       return;
     }
     if (frame.type === "auth_invalid") {
@@ -1570,8 +1572,16 @@ async function openHomeEventStream(
   try {
     sendSseEvent(response, "snapshot", await loadHomeState());
   } catch (error) {
-    sendSseEvent(response, "error", { error: safeError(error) });
+    // Not "error": EventSource treats an event by that name as a broken stream.
+    sendSseEvent(response, "unavailable", { error: safeError(error) });
   }
+}
+
+/** Resends everything after Home Assistant's event socket (re)connects. */
+function refreshHomeClients(): void {
+  loadHomeState()
+    .then((state) => broadcastHomeEvent("snapshot", state))
+    .catch((error) => broadcastHomeEvent("unavailable", { error: safeError(error) }));
 }
 
 function normalizeRemoteAddress(request: IncomingMessage): string {

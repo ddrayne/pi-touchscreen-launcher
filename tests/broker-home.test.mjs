@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -22,8 +23,19 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-async function startFakes() {
+function acceptKey(key) {
+  return createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+}
+
+// Server-to-client WebSocket text frame; every message here is under 126 bytes.
+function textFrame(value) {
+  const payload = Buffer.from(JSON.stringify(value));
+  return Buffer.concat([Buffer.from([0x81, payload.length]), payload]);
+}
+
+async function startFakes({ websocket = false } = {}) {
   const calls = [];
+  const sockets = new Set();
   const states = {
     "zone.home": { state: "0", attributes: { latitude: 51.4779, longitude: -0.0015 } },
     [MEDIA]: {
@@ -87,9 +99,48 @@ async function startFakes() {
       },
     });
   });
+  // Just enough of Home Assistant's event socket to authenticate the broker.
+  let authenticated = 0;
+  if (websocket) {
+    homeAssistant.on("upgrade", (request, socket) => {
+      socket.write(
+        [
+          "HTTP/1.1 101 Switching Protocols",
+          "Upgrade: websocket",
+          "Connection: Upgrade",
+          `Sec-WebSocket-Accept: ${acceptKey(request.headers["sec-websocket-key"])}`,
+          "",
+          "",
+        ].join("\r\n"),
+      );
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      socket.on("error", () => {});
+      socket.write(textFrame({ type: "auth_required" }));
+      socket.once("data", () => {
+        authenticated += 1;
+        socket.write(textFrame({ type: "auth_ok" }));
+      });
+    });
+  }
   const haPort = await listen(homeAssistant);
   const meteoPort = await listen(openMeteo);
-  return { calls, states, haPort, meteoPort, close: () => { homeAssistant.close(); openMeteo.close(); } };
+  return {
+    calls,
+    states,
+    haPort,
+    meteoPort,
+    authenticated: () => authenticated,
+    /** Drops the broker's event socket, as a Home Assistant restart does. */
+    dropEventSockets: () => {
+      for (const socket of sockets) socket.destroy();
+    },
+    close: () => {
+      for (const socket of sockets) socket.destroy();
+      homeAssistant.close();
+      openMeteo.close();
+    },
+  };
 }
 
 async function startBroker(fakes) {
@@ -131,6 +182,46 @@ async function startBroker(fakes) {
       await rm(directory, { recursive: true, force: true });
     },
   };
+}
+
+/** Reads a server-sent event stream one named event at a time. */
+function eventReader(url) {
+  const controller = new AbortController();
+  const decoder = new TextDecoder();
+  let reader = null;
+  let buffer = "";
+  return {
+    async next(timeoutMs = 5_000) {
+      reader ??= (await fetch(url, { signal: controller.signal })).body.getReader();
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const end = buffer.indexOf("\n\n");
+        if (end !== -1) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const event = block.match(/^event: (.+)$/m)?.[1];
+          if (event) return { event, data: JSON.parse(block.match(/^data: (.+)$/m)?.[1] ?? "null") };
+          continue;
+        }
+        let timer;
+        const timeout = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("no event in time")), Math.max(0, deadline - Date.now()));
+        });
+        const result = await Promise.race([reader.read(), timeout]).finally(() => clearTimeout(timer));
+        if (result.done) throw new Error("the stream ended");
+        buffer += decoder.decode(result.value, { stream: true });
+      }
+    },
+    close: () => controller.abort(),
+  };
+}
+
+async function until(condition, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("condition not met in time");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 async function firstEvent(url) {
@@ -215,4 +306,48 @@ test("broker serves weather, the kitchen speaker and presence without OpenClaw",
   assert.equal(check.media.state, "playing");
   assert.equal(check.home.event, "snapshot");
   assert.equal(check.home.presence.occupied, true);
+});
+
+test("broker resends presence after Home Assistant's event socket comes back", async (t) => {
+  const fakes = await startFakes({ websocket: true });
+  const broker = await startBroker(fakes);
+  const events = eventReader(`${broker.url}/home/events`);
+  t.after(async () => {
+    events.close();
+    await broker.stop();
+    fakes.close();
+  });
+
+  await until(() => fakes.authenticated() === 1);
+  const first = await events.next();
+  assert.equal(first.event, "snapshot");
+  assert.equal(first.data.presence.occupied, true);
+
+  // Everyone leaves while Home Assistant restarts, so no state_changed arrives.
+  fakes.states["binary_sensor.kitchen_motion_sensor_motion"] = {
+    state: "off",
+    last_changed: "2026-10-06T12:30:00+00:00",
+  };
+  fakes.dropEventSockets();
+  let latest = first;
+  while (latest.event !== "snapshot" || latest.data.presence.occupied !== false) {
+    latest = await events.next(10_000);
+  }
+  assert.equal(fakes.authenticated(), 2, "the broker reconnected and refreshed");
+  assert.equal(latest.data.presence.changedAt, "2026-10-06T12:30:00+00:00");
+});
+
+test("broker reports an unreachable Home Assistant without breaking the stream", async (t) => {
+  const meteo = await startFakes();
+  const closed = createServer();
+  const closedPort = await listen(closed);
+  closed.close();
+  const broker = await startBroker({ ...meteo, haPort: closedPort });
+  t.after(async () => {
+    await broker.stop();
+    meteo.close();
+  });
+  // EventSource treats an event named "error" as a broken stream.
+  const first = await firstEvent(`${broker.url}/home/events`);
+  assert.equal(first.event, "unavailable");
 });
