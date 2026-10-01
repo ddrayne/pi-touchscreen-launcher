@@ -1,0 +1,24 @@
+[Unit]
+Description=Kitchen voice satellite (Linux Voice Assistant for Home Assistant)
+After=pipewire.service pipewire-pulse.service wireplumber.service
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/linux-voice-assistant
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_SERVER=/run/user/1000/pulse/native
+Environment=PULSE_COOKIE=%h/.config/linux-voice-assistant/pulse-cookie
+Environment=PREFERENCES_FILE=%h/.config/linux-voice-assistant/preferences.json
+# The peripheral WebSocket has no authentication, so it only listens on this
+# Pi: the kitchen screen in Chromium is its one client.
+Environment=PERIPHERAL_HOST=127.0.0.1
+Environment=PERIPHERAL_PORT=6055
+EnvironmentFile=-%h/.config/linux-voice-assistant/environment
+ExecStart=%h/linux-voice-assistant/docker-entrypoint.sh
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

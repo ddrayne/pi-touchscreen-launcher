@@ -8,13 +8,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/Users/dan/.nvm/versions/node/v24.18.0/bin/node</string>
-    <string>--import</string>
-    <string>/Users/dan/openclaw/node_modules/tsx/dist/loader.mjs</string>
     <string>/Users/dan/pi-touchscreen-launcher/broker/openclaw_voice_broker.ts</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/dan/openclaw</string>
+  <string>/Users/dan/pi-touchscreen-launcher</string>
 
   <key>EnvironmentVariables</key>
   <dict>

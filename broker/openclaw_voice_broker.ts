@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * Narrow LAN broker for the touchscreen's inline voice experience.
+ * Narrow LAN broker for the kitchen screen.
  *
- * The browser receives only the short-lived provider session returned by
- * talk.client.create. OpenClaw's gateway credential and persistent connection
- * remain on this Mac, which is also important because Talk tool calls are
- * owned by the connection that created them.
+ * The Home Assistant token stays on this Mac. The Pi receives only the narrow
+ * results it needs: the canonical shopping list, household summary, weather,
+ * the kitchen speaker's now-playing state, and whether anyone is in the
+ * kitchen. Voice is handled by the Pi's Home Assistant satellite, so this
+ * broker has no dependency on OpenClaw.
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
@@ -21,15 +22,6 @@ import {
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 
-import { loadConfig } from "../../openclaw/src/config/io.ts";
-import { GatewayClient } from "../../openclaw/src/gateway/client.ts";
-import { resolveGatewayClientBootstrap } from "../../openclaw/src/gateway/client-bootstrap.ts";
-import { CLI_DEFAULT_OPERATOR_SCOPES } from "../../openclaw/src/gateway/method-scopes.ts";
-import {
-  GATEWAY_CLIENT_MODES,
-  GATEWAY_CLIENT_NAMES,
-} from "../../openclaw/packages/gateway-protocol/src/client-info.ts";
-
 const HOST = process.env.VOICE_BROKER_HOST?.trim() || "0.0.0.0";
 const PORT = Number.parseInt(process.env.VOICE_BROKER_PORT || "18890", 10);
 const ALLOWED_IPS = new Set(
@@ -38,13 +30,8 @@ const ALLOWED_IPS = new Set(
     .map((entry) => entry.trim())
     .filter(Boolean),
 );
-const SESSION_KEY = "agent:main:main";
-const TOUCHSCREEN_VAD_THRESHOLD = 0.62;
-const TOUCHSCREEN_VAD_SILENCE_MS = 650;
-const TOUCHSCREEN_VAD_PREFIX_MS = 300;
 const BODY_LIMIT = 128 * 1024;
-const CAMERA_BODY_LIMIT = 4 * 1024 * 1024;
-const TOOL_TIMEOUT_MS = 120_000;
+const REQUEST_TIMEOUT_MS = 60_000;
 const HOME_ASSISTANT_KEYCHAIN_SERVICE = "pi-touchscreen-home-assistant-token";
 const HOME_ASSISTANT_KEYCHAIN_ACCOUNT =
   process.env.HA_KEYCHAIN_ACCOUNT || "dan";
@@ -105,26 +92,28 @@ const HOUSEHOLD_CONTROL_ENTITIES = (
   .split(",")
   .map((entry) => entry.trim())
   .filter((entry) => /^light\.[a-z0-9_]+$/.test(entry));
-const OPENAI_KEY_PATH =
-  process.env.OPENAI_KEY_PATH ||
-  join(process.env.HOME || "/Users/dan", ".openclaw", "secrets", "openai-api-key");
-const OPENAI_VISION_MODEL =
-  process.env.OPENAI_VISION_MODEL?.trim() || "gpt-5.6-luna";
-const OPENAI_RESPONSES_URL =
-  process.env.OPENAI_RESPONSES_URL?.trim() ||
-  "https://api.openai.com/v1/responses";
-const OPENAI_TIMEOUT_MS = 60_000;
-
-function loadOpenAiApiKey(): string {
-  if (process.env.OPENAI_API_KEY?.trim()) return process.env.OPENAI_API_KEY.trim();
-  try {
-    return readFileSync(OPENAI_KEY_PATH, "utf8").trim();
-  } catch {
-    return "";
-  }
-}
-
-const OPENAI_API_KEY = loadOpenAiApiKey();
+const KITCHEN_MEDIA_ENTITY = /^media_player\.[a-z0-9_]+$/.test(
+  process.env.KITCHEN_MEDIA_ENTITY?.trim() || "",
+)
+  ? (process.env.KITCHEN_MEDIA_ENTITY as string).trim()
+  : "media_player.kitchen_kitchen";
+const KITCHEN_PRESENCE_ENTITIES = (
+  process.env.KITCHEN_PRESENCE_ENTITIES ||
+  "binary_sensor.kitchen_motion_sensor_motion,binary_sensor.kitchen_motion"
+)
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter((entry) => /^binary_sensor\.[a-z0-9_]+$/.test(entry));
+const KITCHEN_ILLUMINANCE_ENTITY = /^sensor\.[a-z0-9_]+$/.test(
+  process.env.KITCHEN_ILLUMINANCE_ENTITY?.trim() || "",
+)
+  ? (process.env.KITCHEN_ILLUMINANCE_ENTITY as string).trim()
+  : "sensor.kitchen_motion_sensor_illuminance";
+const OPEN_METEO_URL = (
+  process.env.OPEN_METEO_URL?.trim() || "https://api.open-meteo.com/v1/forecast"
+).replace(/\/+$/, "");
+const WEATHER_CACHE_MS = 10 * 60_000;
+const MEDIA_ART_LIMIT = 4 * 1024 * 1024;
 
 type JsonRecord = Record<string, unknown>;
 type ShoppingItem = {
@@ -173,46 +162,22 @@ type ShoppingActivity = {
   text?: string;
   detail?: string;
 };
-type CameraShoppingAnalysis = {
-  kind:
-    | "product"
-    | "barcode"
-    | "handwritten-list"
-    | "receipt"
-    | "groceries"
-    | "unknown";
-  summary: string;
-  barcode: string | null;
-  items: Array<{
-    text: string;
-    confidence: number;
-    evidence: string;
-  }>;
-  warnings: string[];
-  model: string;
-};
 type ShoppingReminderSettings = {
   enabled: boolean;
   zoneEntityId: string | null;
   personEntityId: string;
   notifyService: string;
 };
-type RunWaiter = {
-  resolve: (text: string) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-};
 
-let gatewayReady = false;
-let gateway: GatewayClient | null = null;
-const connectionWaiters = new Set<{
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}>();
-const runWaiters = new Map<string, RunWaiter>();
-const completedRuns = new Map<string, { text?: string; error?: string; at: number }>();
 const shoppingEventClients = new Set<ServerResponse>();
+const homeEventClients = new Set<ServerResponse>();
+const presenceStates = new Map<string, { on: boolean; changedAt: string | null }>();
+let presenceLoaded = false;
+let illuminanceLux: number | null = null;
+let mediaEntityPicture: string | null = null;
+let lastMediaJson = "";
+let homeLocation: { latitude: number; longitude: number } | null = null;
+let weatherCache: { at: number; value: JsonRecord } | null = null;
 const shoppingActivities: ShoppingActivity[] = [];
 const recentLocalShoppingEvents = new Map<string, number>();
 let homeAssistantSocket: WebSocket | null = null;
@@ -461,7 +426,7 @@ function wasRecentLocalShoppingEvent(action: string, itemId?: string): boolean {
   );
 }
 
-function sendShoppingEvent(
+function sendSseEvent(
   response: ServerResponse,
   event: string,
   data: unknown,
@@ -475,8 +440,8 @@ function broadcastShoppingSnapshot(
 ): void {
   for (const response of shoppingEventClients) {
     try {
-      if (activity) sendShoppingEvent(response, "activity", activity);
-      sendShoppingEvent(response, "snapshot", snapshot);
+      if (activity) sendSseEvent(response, "activity", activity);
+      sendSseEvent(response, "snapshot", snapshot);
     } catch {
       shoppingEventClients.delete(response);
     }
@@ -1135,200 +1100,293 @@ async function toggleHouseholdControl(body: JsonRecord): Promise<JsonRecord> {
   return await getHouseholdHub();
 }
 
-const CAMERA_ANALYSIS_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["kind", "summary", "barcode", "items", "warnings"],
-  properties: {
-    kind: {
-      type: "string",
-      enum: [
-        "product",
-        "barcode",
-        "handwritten-list",
-        "receipt",
-        "groceries",
-        "unknown",
-      ],
-    },
-    summary: { type: "string" },
-    barcode: { type: ["string", "null"] },
-    items: {
-      type: "array",
-      maxItems: 40,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["text", "confidence", "evidence"],
-        properties: {
-          text: { type: "string" },
-          confidence: { type: "number", minimum: 0, maximum: 1 },
-          evidence: { type: "string" },
-        },
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function numberAt(values: unknown, index: number): number | null {
+  return Array.isArray(values) ? finiteNumber(values[index]) : null;
+}
+
+function stringAt(values: unknown, index: number): string | null {
+  return Array.isArray(values) && typeof values[index] === "string"
+    ? (values[index] as string)
+    : null;
+}
+
+function envCoordinate(name: string, limit: number): number | null {
+  const value = Number.parseFloat(process.env[name] || "");
+  return Number.isFinite(value) && Math.abs(value) <= limit ? value : null;
+}
+
+async function getHomeLocation(): Promise<{ latitude: number; longitude: number }> {
+  if (homeLocation) return homeLocation;
+  const latitude = envCoordinate("WEATHER_LATITUDE", 90);
+  const longitude = envCoordinate("WEATHER_LONGITUDE", 180);
+  if (latitude !== null && longitude !== null) {
+    homeLocation = { latitude, longitude };
+    return homeLocation;
+  }
+  const zone = asRecord(await homeAssistantJson("/api/states/zone.home"));
+  const attributes = asRecord(zone.attributes);
+  const zoneLatitude = finiteNumber(attributes.latitude);
+  const zoneLongitude = finiteNumber(attributes.longitude);
+  if (zoneLatitude === null || zoneLongitude === null) {
+    throw new Error("Home Assistant has no home location for the forecast");
+  }
+  homeLocation = { latitude: zoneLatitude, longitude: zoneLongitude };
+  return homeLocation;
+}
+
+/**
+ * The next 16 hours of Open-Meteo's forecast for the home zone. Open-Meteo is
+ * free, needs no key, and gives an hourly chance of rain, which Home
+ * Assistant's default Met.no weather entity does not.
+ */
+async function getWeather(): Promise<JsonRecord> {
+  if (weatherCache && Date.now() - weatherCache.at < WEATHER_CACHE_MS) {
+    return weatherCache.value;
+  }
+  try {
+    const { latitude, longitude } = await getHomeLocation();
+    const url = new URL(OPEN_METEO_URL);
+    url.search = new URLSearchParams({
+      latitude: latitude.toFixed(4),
+      longitude: longitude.toFixed(4),
+      current: "temperature_2m,weather_code,is_day",
+      hourly: "temperature_2m,precipitation_probability,precipitation,weather_code",
+      daily: "temperature_2m_max,temperature_2m_min,sunrise,sunset",
+      timezone: "auto",
+      forecast_days: "2",
+    }).toString();
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(HOME_ASSISTANT_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`Open-Meteo request failed (${response.status})`);
+    const forecast = asRecord(await response.json());
+    const current = asRecord(forecast.current);
+    const hourly = asRecord(forecast.hourly);
+    const daily = asRecord(forecast.daily);
+    const currentHour = typeof current.time === "string" ? current.time.slice(0, 13) : "";
+    const times = Array.isArray(hourly.time) ? hourly.time : [];
+    const hours = times
+      .flatMap((time, index): JsonRecord[] => {
+        if (typeof time !== "string") return [];
+        if (currentHour && time.slice(0, 13) < currentHour) return [];
+        return [
+          {
+            time,
+            temperature: numberAt(hourly.temperature_2m, index),
+            precipitationProbability: numberAt(hourly.precipitation_probability, index),
+            precipitation: numberAt(hourly.precipitation, index),
+            weatherCode: numberAt(hourly.weather_code, index),
+          },
+        ];
+      })
+      .slice(0, 16);
+    const value: JsonRecord = {
+      now: {
+        temperature: finiteNumber(current.temperature_2m),
+        weatherCode: finiteNumber(current.weather_code),
+        isDay: current.is_day !== 0,
       },
-    },
-    warnings: {
-      type: "array",
-      maxItems: 10,
-      items: { type: "string" },
-    },
-  },
-} as const;
-
-function extractOpenAiOutputText(value: unknown): string {
-  const response = asRecord(value);
-  const output = Array.isArray(response.output) ? response.output : [];
-  return output
-    .flatMap((entry) => {
-      const content = asRecord(entry).content;
-      return Array.isArray(content) ? content : [];
-    })
-    .map((entry) => {
-      const block = asRecord(entry);
-      return block.type === "output_text" && typeof block.text === "string"
-        ? block.text
-        : "";
-    })
-    .filter(Boolean)
-    .join("");
+      today: {
+        high: numberAt(daily.temperature_2m_max, 0),
+        low: numberAt(daily.temperature_2m_min, 0),
+        sunrise: stringAt(daily.sunrise, 0),
+        sunset: stringAt(daily.sunset, 0),
+      },
+      hours,
+      updatedAt: new Date().toISOString(),
+    };
+    weatherCache = { at: Date.now(), value };
+    return value;
+  } catch (error) {
+    if (weatherCache) return { ...weatherCache.value, stale: true };
+    throw error;
+  }
 }
 
-function cleanBarcode(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value.replace(/[^0-9A-Za-z-]/g, "").slice(0, 64);
+async function getEntityState(entityId: string): Promise<JsonRecord | null> {
+  try {
+    return asRecord(await homeAssistantJson(`/api/states/${entityId}`));
+  } catch (error) {
+    if (safeError(error).includes("(404)")) return null;
+    throw error;
+  }
 }
 
-function normalizeCameraAnalysis(value: unknown): CameraShoppingAnalysis {
-  const result = asRecord(value);
-  const allowedKinds = new Set<CameraShoppingAnalysis["kind"]>([
-    "product",
-    "barcode",
-    "handwritten-list",
-    "receipt",
-    "groceries",
-    "unknown",
-  ]);
-  const kind = allowedKinds.has(result.kind as CameraShoppingAnalysis["kind"])
-    ? (result.kind as CameraShoppingAnalysis["kind"])
-    : "unknown";
-  const seen = new Set<string>();
-  const items = (Array.isArray(result.items) ? result.items : [])
-    .flatMap((entry): CameraShoppingAnalysis["items"] => {
-      const item = asRecord(entry);
-      const text = cleanItemText(item.text);
-      const key = shoppingProductKey(text);
-      if (!text || seen.has(key)) return [];
-      seen.add(key);
-      const confidence =
-        typeof item.confidence === "number" && Number.isFinite(item.confidence)
-          ? Math.max(0, Math.min(item.confidence, 1))
-          : 0;
-      return [
-        {
-          text,
-          confidence,
-          evidence: cleanItemText(item.evidence),
-        },
-      ];
-    })
-    .slice(0, 40);
-  const warnings = (Array.isArray(result.warnings) ? result.warnings : [])
-    .map(cleanItemText)
-    .filter(Boolean)
-    .slice(0, 10);
-  const barcode = cleanBarcode(result.barcode);
+function optionalText(value: unknown): string | null {
+  return typeof value === "string" ? cleanItemText(value) || null : null;
+}
+
+/** What the kitchen speaker is doing, without exposing Home Assistant URLs or tokens. */
+function mediaSnapshot(state: JsonRecord | null): JsonRecord {
+  const attributes = asRecord(state?.attributes);
+  const picture =
+    typeof attributes.entity_picture === "string" ? attributes.entity_picture : null;
+  mediaEntityPicture = picture;
   return {
-    kind,
-    summary:
-      cleanItemText(result.summary) ||
-      (items.length ? `${items.length} shopping items found` : "Nothing clear enough to add"),
-    barcode: barcode || null,
-    items,
-    warnings,
-    model: OPENAI_VISION_MODEL,
+    entityId: KITCHEN_MEDIA_ENTITY,
+    state: typeof state?.state === "string" ? state.state : "unavailable",
+    title: optionalText(attributes.media_title),
+    artist: optionalText(attributes.media_artist) ?? optionalText(attributes.media_album_artist),
+    album: optionalText(attributes.media_album_name),
+    source: optionalText(attributes.app_name) ?? optionalText(attributes.source),
+    volume: finiteNumber(attributes.volume_level),
+    muted: attributes.is_volume_muted === true,
+    artVersion: picture
+      ? createHash("sha1").update(picture).digest("hex").slice(0, 12)
+      : null,
   };
 }
 
-async function analyzeShoppingCamera(body: JsonRecord): Promise<CameraShoppingAnalysis> {
-  if (!OPENAI_API_KEY) {
-    throw new Error("Camera shopping analysis is not configured");
+async function getMedia(): Promise<JsonRecord> {
+  return mediaSnapshot(await getEntityState(KITCHEN_MEDIA_ENTITY));
+}
+
+const MEDIA_SERVICES: Record<string, string> = {
+  play_pause: "media_play_pause",
+  next: "media_next_track",
+  previous: "media_previous_track",
+};
+
+async function controlMedia(body: JsonRecord): Promise<JsonRecord> {
+  const action = typeof body.action === "string" ? body.action : "";
+  if (action === "volume") {
+    const volume = finiteNumber(body.volume);
+    if (volume === null) throw new Error("A volume between 0 and 1 is required");
+    await homeAssistantJson("/api/services/media_player/volume_set", {
+      entity_id: KITCHEN_MEDIA_ENTITY,
+      volume_level: Math.max(0, Math.min(1, volume)),
+    });
+    return { ok: true };
   }
-  const imageBase64 =
-    typeof body.imageBase64 === "string" ? body.imageBase64.trim() : "";
-  if (
-    !imageBase64 ||
-    imageBase64.length > 3_500_000 ||
-    !/^[A-Za-z0-9+/=\r\n]+$/.test(imageBase64)
-  ) {
-    throw new Error("A valid JPEG camera frame is required");
-  }
-  const detectedBarcode = cleanBarcode(body.barcode);
-  const prompt = [
-    "Analyse this single Raspberry Pi camera frame for a UK household shopping list.",
-    "It may show one packaged product, loose groceries, a barcode, a handwritten list, or a receipt.",
-    "Return only products that are visibly supported by the image. Do not invent obscured text or ingredients.",
-    "For a product, make `text` a concise buyable item name, including a visible quantity only when useful.",
-    "For a handwritten list, transcribe each legible shopping line. For a receipt, infer replenishable grocery products, not prices, totals, discounts, dates, or payment lines.",
-    "Use confidence below 0.65 for uncertain candidates and explain the visible evidence briefly.",
-    detectedBarcode
-      ? `A local barcode scanner read ${detectedBarcode}; include it as barcode and use it as supporting evidence.`
-      : "If barcode digits are clearly legible, return them; otherwise barcode must be null.",
-  ].join(" ");
-  const response = await fetch(OPENAI_RESPONSES_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: OPENAI_VISION_MODEL,
-      store: false,
-      input: [
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: prompt },
-            {
-              type: "input_image",
-              image_url: `data:image/jpeg;base64,${imageBase64}`,
-              detail: "high",
-            },
-          ],
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "camera_shopping_analysis",
-          description:
-            "Grounded shopping products visible in a household camera frame.",
-          strict: true,
-          schema: CAMERA_ANALYSIS_SCHEMA,
-        },
-      },
-    }),
-    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
+  const service = MEDIA_SERVICES[action];
+  if (!service) throw new Error("That media action is not supported");
+  await homeAssistantJson(`/api/services/media_player/${service}`, {
+    entity_id: KITCHEN_MEDIA_ENTITY,
   });
-  const responseText = await response.text();
-  let payload: unknown = {};
-  try {
-    payload = JSON.parse(responseText);
-  } catch {
-    throw new Error(`Camera analysis returned an invalid response (${response.status})`);
+  return { ok: true };
+}
+
+/** Album art comes through Home Assistant's media proxy, which needs the token. */
+async function sendMediaArt(response: ServerResponse): Promise<void> {
+  if (!mediaEntityPicture) await getMedia();
+  const picture = mediaEntityPicture;
+  const fromHomeAssistant = Boolean(picture?.startsWith("/api/"));
+  const url = fromHomeAssistant ? `${HOME_ASSISTANT_URL}${picture}` : picture || "";
+  if (!fromHomeAssistant && !/^https:\/\//.test(url)) {
+    sendJson(response, 404, { error: "There is no artwork for the kitchen speaker" });
+    return;
   }
-  if (!response.ok) {
-    const error = asRecord(asRecord(payload).error);
-    const message = typeof error.message === "string" ? error.message : "";
-    throw new Error(
-      `Camera analysis failed (${response.status})${message ? `: ${message}` : ""}`,
-    );
+  const upstream = await fetch(url, {
+    headers: fromHomeAssistant ? { Authorization: `Bearer ${HOME_ASSISTANT_TOKEN}` } : {},
+    signal: AbortSignal.timeout(HOME_ASSISTANT_TIMEOUT_MS),
+  });
+  const contentType = upstream.headers.get("content-type") || "";
+  const body = Buffer.from(await upstream.arrayBuffer());
+  if (!upstream.ok || !contentType.startsWith("image/") || body.length > MEDIA_ART_LIMIT) {
+    sendJson(response, 502, { error: "The artwork could not be loaded" });
+    return;
   }
-  const outputText = extractOpenAiOutputText(payload);
-  if (!outputText) throw new Error("Camera analysis returned no result");
-  try {
-    return normalizeCameraAnalysis(JSON.parse(outputText));
-  } catch {
-    throw new Error("Camera analysis returned invalid structured data");
+  response.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Length": String(body.length),
+    "Cache-Control": "private, max-age=600",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(body);
+}
+
+function readLux(state: JsonRecord | null): number | null {
+  const value = Number.parseFloat(typeof state?.state === "string" ? state.state : "");
+  return Number.isFinite(value) ? Math.round(value) : null;
+}
+
+function rememberPresence(entityId: string, state: JsonRecord | null): void {
+  const value = state?.state;
+  if (!state || value === "unavailable" || value === "unknown") {
+    presenceStates.delete(entityId);
+    return;
+  }
+  presenceStates.set(entityId, {
+    on: value === "on",
+    changedAt: typeof state.last_changed === "string" ? state.last_changed : null,
+  });
+}
+
+/** Whether anyone is in the kitchen; the screen sleeps a while after it empties. */
+function presenceSnapshot(): JsonRecord {
+  const sensors = [...presenceStates.values()];
+  const changedAt =
+    sensors
+      .map((sensor) => sensor.changedAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? null;
+  return {
+    known: presenceLoaded && sensors.length > 0,
+    occupied: sensors.some((sensor) => sensor.on),
+    changedAt,
+    illuminance: illuminanceLux,
+  };
+}
+
+async function loadHomeState(): Promise<JsonRecord> {
+  const [presence, illuminance, media] = await Promise.all([
+    Promise.all(
+      KITCHEN_PRESENCE_ENTITIES.map(
+        async (entityId) => [entityId, await getEntityState(entityId)] as const,
+      ),
+    ),
+    getEntityState(KITCHEN_ILLUMINANCE_ENTITY).catch(() => null),
+    getEntityState(KITCHEN_MEDIA_ENTITY),
+  ]);
+  for (const [entityId, state] of presence) rememberPresence(entityId, state);
+  presenceLoaded = true;
+  illuminanceLux = readLux(illuminance);
+  const mediaState = mediaSnapshot(media);
+  lastMediaJson = JSON.stringify(mediaState);
+  return { presence: presenceSnapshot(), media: mediaState };
+}
+
+function broadcastHomeEvent(event: string, data: unknown): void {
+  for (const response of homeEventClients) {
+    try {
+      sendSseEvent(response, event, data);
+    } catch {
+      homeEventClients.delete(response);
+    }
+  }
+}
+
+function handleHomeStateChange(entityId: string, newState: JsonRecord): void {
+  if (KITCHEN_PRESENCE_ENTITIES.includes(entityId)) {
+    const before = JSON.stringify(presenceSnapshot());
+    rememberPresence(entityId, newState);
+    presenceLoaded = true;
+    const after = presenceSnapshot();
+    if (JSON.stringify(after) !== before) broadcastHomeEvent("presence", after);
+    return;
+  }
+  if (entityId === KITCHEN_ILLUMINANCE_ENTITY) {
+    const lux = readLux(newState);
+    if (lux !== illuminanceLux) {
+      illuminanceLux = lux;
+      broadcastHomeEvent("presence", presenceSnapshot());
+    }
+    return;
+  }
+  if (entityId === KITCHEN_MEDIA_ENTITY) {
+    // Players report their position constantly; only real changes are sent on.
+    const media = mediaSnapshot(newState);
+    const json = JSON.stringify(media);
+    if (json !== lastMediaJson) {
+      lastMediaJson = json;
+      broadcastHomeEvent("media", media);
+    }
   }
 }
 
@@ -1420,6 +1478,7 @@ function connectHomeAssistantEvents(): void {
             console.error(`Could not send shopping reminder: ${safeError(error)}`);
           },
         );
+        handleHomeStateChange(entityId, asRecord(data.new_state));
       }
       return;
     }
@@ -1460,7 +1519,8 @@ function connectHomeAssistantEvents(): void {
     scheduleHomeAssistantReconnect();
   });
   socket.addEventListener("error", () => {
-    socket.close();
+    // A close event always follows and schedules the reconnect. Calling
+    // close() here re-enters the failing handshake and overflows the stack.
   });
 }
 
@@ -1476,159 +1536,42 @@ async function openShoppingEventStream(
   });
   response.flushHeaders();
   shoppingEventClients.add(response);
-  sendShoppingEvent(response, "connected", {
+  sendSseEvent(response, "connected", {
     at: new Date().toISOString(),
     homeAssistantConnected:
       homeAssistantSocket?.readyState === WebSocket.OPEN,
   });
   try {
-    sendShoppingEvent(response, "snapshot", await getShoppingSnapshot());
+    sendSseEvent(response, "snapshot", await getShoppingSnapshot());
   } catch (error) {
-    sendShoppingEvent(response, "error", { error: safeError(error) });
+    sendSseEvent(response, "error", { error: safeError(error) });
   }
   const cleanup = () => shoppingEventClients.delete(response);
   request.on("close", cleanup);
   response.on("close", cleanup);
 }
 
-function extractMessageText(message: unknown): string {
-  if (!message || typeof message !== "object" || Array.isArray(message)) return "";
-  const record = message as JsonRecord;
-  if (typeof record.text === "string") return record.text.trim();
-  if (!Array.isArray(record.content)) return "";
-  return record.content
-    .map((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) return "";
-      const block = entry as JsonRecord;
-      return block.type === "text" && typeof block.text === "string" ? block.text : "";
-    })
-    .filter(Boolean)
-    .join("\n\n")
-    .trim();
-}
-
-function settleRun(runId: string, result: { text?: string; error?: string }): void {
-  const waiter = runWaiters.get(runId);
-  if (waiter) {
-    clearTimeout(waiter.timer);
-    runWaiters.delete(runId);
-    if (result.error) waiter.reject(new Error(result.error));
-    else waiter.resolve(result.text || "OpenClaw finished with no text.");
-    return;
-  }
-  completedRuns.set(runId, { ...result, at: Date.now() });
-  for (const [id, cached] of completedRuns) {
-    if (Date.now() - cached.at > 30_000) completedRuns.delete(id);
-  }
-}
-
-function handleGatewayEvent(event: unknown): void {
-  if (!event || typeof event !== "object" || Array.isArray(event)) return;
-  const frame = event as JsonRecord;
-  if (frame.event !== "chat" || !frame.payload || typeof frame.payload !== "object") return;
-  const payload = frame.payload as JsonRecord;
-  const runId = typeof payload.runId === "string" ? payload.runId : "";
-  if (!runId) return;
-  if (payload.state === "final") {
-    settleRun(runId, { text: extractMessageText(payload.message) });
-  } else if (payload.state === "aborted") {
-    settleRun(runId, {
-      error:
-        typeof payload.errorMessage === "string"
-          ? payload.errorMessage
-          : "OpenClaw tool call was cancelled",
-    });
-  } else if (payload.state === "error") {
-    settleRun(runId, {
-      error:
-        typeof payload.errorMessage === "string"
-          ? payload.errorMessage
-          : "OpenClaw tool call failed",
-    });
-  }
-}
-
-async function connectGateway(): Promise<void> {
-  const config = loadConfig({ skipPluginValidation: true, pin: false });
-  const bootstrap = await resolveGatewayClientBootstrap({ config });
-  gateway = new GatewayClient({
-    url: bootstrap.url,
-    token: bootstrap.auth.token,
-    password: bootstrap.auth.password,
-    preauthHandshakeTimeoutMs: bootstrap.preauthHandshakeTimeoutMs,
-    instanceId: randomUUID(),
-    // This is a persistent headless broker, not the browser control UI.
-    // Advertising the UI identity makes the gateway enforce bundled UI build IDs.
-    clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
-    clientDisplayName: "Pi touchscreen voice broker",
-    clientVersion: "1.0.0",
-    platform: process.platform,
-    mode: GATEWAY_CLIENT_MODES.BACKEND,
-    role: "operator",
-    scopes: [...CLI_DEFAULT_OPERATOR_SCOPES],
-    onEvent: handleGatewayEvent,
-    onHelloOk: () => {
-      gatewayReady = true;
-      for (const waiter of connectionWaiters) {
-        clearTimeout(waiter.timer);
-        waiter.resolve();
-      }
-      connectionWaiters.clear();
-      console.log("OpenClaw gateway connected");
-    },
-    onClose: () => {
-      gatewayReady = false;
-    },
-    onConnectError: (error) => {
-      gatewayReady = false;
-      console.error(`OpenClaw gateway connection failed: ${safeError(error)}`);
-    },
+/** Kitchen presence and the kitchen speaker, pushed to the screen as they change. */
+async function openHomeEventStream(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  response.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-store, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
   });
-  gateway.start();
-  await waitForGateway();
-}
-
-function waitForGateway(timeoutMs = 15_000): Promise<void> {
-  if (gatewayReady) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const waiter = {
-      resolve,
-      reject,
-      timer: setTimeout(() => {
-        connectionWaiters.delete(waiter);
-        reject(new Error("OpenClaw gateway connection timed out"));
-      }, timeoutMs),
-    };
-    connectionWaiters.add(waiter);
-  });
-}
-
-async function requestGateway<T = JsonRecord>(
-  method: string,
-  params: JsonRecord,
-  timeoutMs = 30_000,
-): Promise<T> {
-  if (!gateway) await connectGateway();
-  await waitForGateway();
-  if (!gateway) throw new Error("OpenClaw gateway is unavailable");
-  return await gateway.request<T>(method, params, { timeoutMs });
-}
-
-function waitForRun(runId: string): Promise<string> {
-  const cached = completedRuns.get(runId);
-  if (cached) {
-    completedRuns.delete(runId);
-    return cached.error
-      ? Promise.reject(new Error(cached.error))
-      : Promise.resolve(cached.text || "OpenClaw finished with no text.");
+  response.flushHeaders();
+  homeEventClients.add(response);
+  const cleanup = () => homeEventClients.delete(response);
+  request.on("close", cleanup);
+  response.on("close", cleanup);
+  try {
+    sendSseEvent(response, "snapshot", await loadHomeState());
+  } catch (error) {
+    sendSseEvent(response, "error", { error: safeError(error) });
   }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      runWaiters.delete(runId);
-      reject(new Error("OpenClaw tool call timed out"));
-    }, TOOL_TIMEOUT_MS);
-    runWaiters.set(runId, { resolve, reject, timer });
-  });
 }
 
 function normalizeRemoteAddress(request: IncomingMessage): string {
@@ -1678,13 +1621,52 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const requestUrl = new URL(request.url || "/", "http://voice-broker.local");
   const path = requestUrl.pathname;
   if (request.method === "GET" && path === "/health") {
-    sendJson(response, gatewayReady ? 200 : 503, {
-      ok: gatewayReady,
-      service: "openclaw-voice-broker",
-      shoppingConfigured: Boolean(HOME_ASSISTANT_URL && HOME_ASSISTANT_TOKEN),
-      cameraAnalysisConfigured: Boolean(OPENAI_API_KEY),
-      cameraAnalysisModel: OPENAI_VISION_MODEL,
+    sendJson(response, 200, {
+      ok: true,
+      service: "kitchen-home-broker",
+      homeAssistantConfigured: Boolean(HOME_ASSISTANT_URL && HOME_ASSISTANT_TOKEN),
+      homeAssistantConnected: homeAssistantSocket?.readyState === WebSocket.OPEN,
     });
+    return;
+  }
+  if (request.method === "GET" && path === "/weather") {
+    try {
+      sendJson(response, 200, await getWeather());
+    } catch (error) {
+      sendJson(response, 502, { error: safeError(error) });
+    }
+    return;
+  }
+  if (request.method === "GET" && path === "/media") {
+    try {
+      sendJson(response, 200, await getMedia());
+    } catch (error) {
+      sendJson(response, 502, { error: safeError(error) });
+    }
+    return;
+  }
+  if (request.method === "GET" && path === "/media/art") {
+    try {
+      await sendMediaArt(response);
+    } catch (error) {
+      if (!response.headersSent) sendJson(response, 502, { error: safeError(error) });
+    }
+    return;
+  }
+  if (request.method === "POST" && path === "/media/control") {
+    const body = await readJson(request);
+    try {
+      sendJson(response, 200, await controlMedia(body));
+    } catch (error) {
+      const message = safeError(error);
+      const status =
+        message.includes("required") || message.includes("not supported") ? 400 : 502;
+      sendJson(response, status, { error: message });
+    }
+    return;
+  }
+  if (request.method === "GET" && path === "/home/events") {
+    await openHomeEventStream(request, response);
     return;
   }
   if (request.method === "GET" && path === "/shopping") {
@@ -1725,17 +1707,6 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
       sendJson(response, 200, await getShoppingHousehold());
     } catch (error) {
       sendJson(response, 502, { error: safeError(error) });
-    }
-    return;
-  }
-  if (request.method === "POST" && path === "/shopping/camera/analyze") {
-    try {
-      const body = await readJson(request, CAMERA_BODY_LIMIT);
-      sendJson(response, 200, await analyzeShoppingCamera(body));
-    } catch (error) {
-      const message = safeError(error);
-      const status = message.includes("required") ? 400 : 502;
-      sendJson(response, status, { error: message });
     }
     return;
   }
@@ -1847,154 +1818,42 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     return;
   }
 
-  if (request.method !== "POST") {
-    sendJson(response, 404, { error: "Not found" });
-    return;
-  }
-
-  const body = await readJson(request);
-  if (path === "/session") {
-    const session = await requestGateway("talk.client.create", {
-      sessionKey: SESSION_KEY,
-      // The kiosk microphone is close to a speaker and lives in a shared room.
-      // Bias VAD toward a nearby speaker while retaining a natural pause length.
-      vadThreshold: TOUCHSCREEN_VAD_THRESHOLD,
-      silenceDurationMs: TOUCHSCREEN_VAD_SILENCE_MS,
-      prefixPaddingMs: TOUCHSCREEN_VAD_PREFIX_MS,
-    });
-    sendJson(response, 200, session);
-    return;
-  }
-  if (path === "/tool") {
-    const callId = typeof body.callId === "string" ? body.callId.trim() : "";
-    const name = typeof body.name === "string" ? body.name.trim() : "";
-    if (!callId || name !== "openclaw_agent_consult") {
-      sendJson(response, 400, { error: "Invalid Talk tool call" });
-      return;
-    }
-    try {
-      const started = await requestGateway<{ runId?: string; idempotencyKey?: string }>(
-        "talk.client.toolCall",
-        {
-          sessionKey: SESSION_KEY,
-          callId,
-          name,
-          args:
-            body.args && typeof body.args === "object" && !Array.isArray(body.args)
-              ? body.args
-              : {},
-        },
-      );
-      const runId = started.runId || started.idempotencyKey;
-      if (!runId) throw new Error("OpenClaw did not return a tool run id");
-      sendJson(response, 200, { result: await waitForRun(runId) });
-    } catch (error) {
-      sendJson(response, 200, { error: safeError(error) });
-    }
-    return;
-  }
-  if (path === "/control") {
-    const text = typeof body.text === "string" ? body.text.trim() : "";
-    const mode = typeof body.mode === "string" ? body.mode.trim() : "";
-    if (!text || !["status", "steer", "cancel", "followup"].includes(mode)) {
-      sendJson(response, 400, { error: "Invalid Talk control request" });
-      return;
-    }
-    try {
-      const result = await requestGateway(
-        "talk.client.steer",
-        { sessionKey: SESSION_KEY, text, mode },
-        30_000,
-      );
-      sendJson(response, 200, result);
-    } catch (error) {
-      sendJson(response, 200, { error: safeError(error) });
-    }
-    return;
-  }
   sendJson(response, 404, { error: "Not found" });
 }
 
 const server = createServer((request, response) => {
   void route(request, response).catch((error) => {
-    console.error(`Voice broker request failed: ${safeError(error)}`);
+    console.error(`Kitchen broker request failed: ${safeError(error)}`);
     if (!response.headersSent) sendJson(response, 502, { error: safeError(error) });
     else response.end();
   });
 });
-server.requestTimeout = TOOL_TIMEOUT_MS + 15_000;
+server.requestTimeout = REQUEST_TIMEOUT_MS;
 server.headersTimeout = 15_000;
 
-async function runSelfTest(): Promise<void> {
-  await connectGateway();
-  const session = await requestGateway<JsonRecord>("talk.client.create", {
-    sessionKey: SESSION_KEY,
-  });
-  if (
-    session.transport !== "webrtc" ||
-    typeof session.clientSecret !== "string" ||
-    !session.clientSecret
-  ) {
-    throw new Error("Self-test did not receive a valid WebRTC voice session");
-  }
-  const callId = `broker-self-test-${randomUUID()}`;
-  const started = await requestGateway<{ runId?: string; idempotencyKey?: string }>(
-    "talk.client.toolCall",
-    {
-      sessionKey: SESSION_KEY,
-      callId,
-      name: "openclaw_agent_consult",
-      args: {
-        question:
-          "This is a voice broker connectivity check. Reply with a brief confirmation only.",
-        responseStyle: "One short sentence.",
-      },
-    },
-  );
-  const runId = started.runId || started.idempotencyKey;
-  if (!runId) throw new Error("Self-test consult did not return a run id");
-  const result = await waitForRun(runId);
-  if (!result.trim()) throw new Error("Self-test consult returned no text");
-  console.log("Voice broker self-test passed: WebRTC session and agent consult are healthy");
-  gateway?.stop();
-}
+server.listen(PORT, HOST, () => {
+  console.log(`Kitchen broker listening on ${HOST}:${PORT}`);
+  connectHomeAssistantEvents();
+});
 
-if (process.env.VOICE_BROKER_SELF_TEST === "1") {
-  void runSelfTest().then(
-    () => process.exit(0),
-    (error) => {
-      console.error(`Voice broker self-test failed: ${safeError(error)}`);
-      gateway?.stop();
-      process.exit(1);
-    },
-  );
-} else {
-  server.listen(PORT, HOST, () => {
-    console.log(`Touchscreen voice broker listening on ${HOST}:${PORT}`);
-    connectHomeAssistantEvents();
-    void connectGateway().catch((error) => {
-      console.error(`Initial OpenClaw connection failed: ${safeError(error)}`);
-    });
-  });
-}
-
-const shoppingHeartbeat = setInterval(() => {
-  for (const response of shoppingEventClients) {
-    try {
-      response.write(`: keepalive ${Date.now()}\n\n`);
-    } catch {
-      shoppingEventClients.delete(response);
+const eventHeartbeat = setInterval(() => {
+  for (const clients of [shoppingEventClients, homeEventClients]) {
+    for (const response of clients) {
+      try {
+        response.write(`: keepalive ${Date.now()}\n\n`);
+      } catch {
+        clients.delete(response);
+      }
     }
   }
 }, 15_000);
-shoppingHeartbeat.unref();
+eventHeartbeat.unref();
 
 function shutdown(): void {
-  gateway?.stop();
   homeAssistantSocket?.close();
   if (homeAssistantReconnectTimer) clearTimeout(homeAssistantReconnectTimer);
-  clearInterval(shoppingHeartbeat);
-  for (const response of shoppingEventClients) response.end();
+  clearInterval(eventHeartbeat);
+  for (const response of [...shoppingEventClients, ...homeEventClients]) response.end();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 2_000).unref();
 }

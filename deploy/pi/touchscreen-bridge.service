@@ -1,5 +1,5 @@
 [Unit]
-Description=Touchscreen launcher local bridge
+Description=Kitchen screen loopback bridge
 After=network-online.target
 Wants=network-online.target
 
@@ -15,6 +15,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
+# Bird photos from Wikipedia, kept so each species is fetched once.
+CacheDirectory=touchscreen-launcher
 
 [Install]
 WantedBy=default.target

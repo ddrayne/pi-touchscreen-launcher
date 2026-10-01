@@ -1,5 +1,5 @@
 [Unit]
-Description=Touchscreen assistant kiosk
+Description=Kitchen screen kiosk
 After=graphical-session.target pipewire.service wireplumber.service touchscreen-bridge.service
 Wants=graphical-session.target pipewire.service wireplumber.service touchscreen-bridge.service
 
@@ -18,16 +18,13 @@ ExecStart=/usr/bin/chromium \
   --app=http://127.0.0.1:8765 \
   --kiosk \
   --no-first-run \
-  --disable-extensions-except=%h/touchscreen-launcher/extension \
-  --load-extension=%h/touchscreen-launcher/extension \
+  --disable-extensions \
   --disable-component-update \
   --disable-session-crashed-bubble \
   --disable-infobars \
   --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port=9222 \
-  --autoplay-policy=no-user-gesture-required \
-  --unsafely-treat-insecure-origin-as-secure=http://192.168.86.24:18789 \
-  --use-fake-ui-for-media-stream
+  --autoplay-policy=no-user-gesture-required
 Restart=always
 RestartSec=4
 TimeoutStopSec=10

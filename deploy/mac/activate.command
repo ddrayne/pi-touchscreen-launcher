@@ -34,4 +34,4 @@ install -m 0644 "$agent_plist_source" "$agent_plist"
 launchctl bootstrap gui/501 "$agent_plist"
 launchctl kickstart -k "$agent_service"
 
-echo "Pi touchscreen voice broker is active."
+echo "Kitchen screen broker is active."

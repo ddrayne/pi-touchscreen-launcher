@@ -23,73 +23,66 @@ async function render() {
   );
 }
 
-test("server-renders the touchscreen launcher", async () => {
+function source(path) {
+  return readFile(new URL(`../${path}`, import.meta.url), "utf8");
+}
+
+test("server-renders the kitchen screen before any data arrives", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Touchscreen Assistant<\/title>/i);
-  assert.match(html, /A quiet intelligence/);
-  assert.match(html, /What would you like to know\?/);
-  assert.match(html, /Live from BirdFrame/);
-  assert.match(html, /House shopping/);
-  assert.match(html, /\+ Add item/);
-  assert.match(html, />Look</);
+  assert.match(html, /<title>Kitchen Screen<\/title>/i);
+  assert.match(html, /aria-label="Kitchen screen"/);
+  assert.match(html, /Listening to the garden/);
+  assert.match(html, /BirdFrame is listening/);
+  assert.match(html, /aria-label="Voice is offline"/);
   assert.doesNotMatch(html, /HA_TOKEN|Bearer\s+[A-Za-z0-9._-]+/);
 });
 
-test("keeps shopping writes behind the narrow broker boundary", async () => {
-  const [launcher, css, bridge, broker, skill] = await Promise.all([
-    readFile(new URL("../components/Launcher.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
-    readFile(new URL("../bridge/launcher_bridge.py", import.meta.url), "utf8"),
-    readFile(
-      new URL("../broker/openclaw_voice_broker.ts", import.meta.url),
-      "utf8",
-    ),
-    readFile(
-      new URL(
-        "../openclaw/house-shopping-list/SKILL.md",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
-  ]);
+test("keeps Home Assistant, the microphone and shopping behind narrow boundaries", async () => {
+  const [screen, hooks, bridge, broker, skill, voiceUnit, kioskUnit, install] =
+    await Promise.all([
+      source("components/KitchenScreen.tsx"),
+      source("components/kitchen/hooks.ts"),
+      source("bridge/launcher_bridge.py"),
+      source("broker/openclaw_voice_broker.ts"),
+      source("openclaw/house-shopping-list/SKILL.md"),
+      source("deploy/pi/linux-voice-assistant.service"),
+      source("deploy/pi/touchscreen-launcher.service"),
+      source("deploy/pi/install.sh"),
+    ]);
 
-  assert.match(launcher, /fetch\("\/api\/shopping"/);
-  assert.match(launcher, /\/api\/shopping\/items/);
-  assert.match(launcher, /\/api\/shopping\/events/);
-  assert.match(launcher, /\/api\/shopping\/camera\/analyze/);
-  assert.match(launcher, /\/api\/shopping\/reconcile/);
-  assert.match(launcher, /\/api\/shopping\/household/);
-  assert.match(launcher, /\/api\/household\/control/);
-  assert.match(launcher, /shopping-sheet__check/);
-  assert.match(launcher, /Shopping camera/);
-  assert.match(launcher, /Household access & reminders/);
-  assert.doesNotMatch(launcher, /HA_TOKEN|homeassistant\.local/);
+  // The screen talks to the Pi's own bridge and to Linux Voice Assistant on loopback.
+  assert.match(screen, /ws:\/\/127\.0\.0\.1:6055/);
+  assert.match(hooks, /\/api\/home\/events/);
+  assert.match(screen, /\/api\/media\/control/);
+  for (const client of [screen, hooks]) {
+    assert.doesNotMatch(client, /HA_TOKEN|homeassistant\.local|192\.168\./);
+  }
 
-  assert.match(css, /\.shopping-card/);
-  assert.match(css, /\.shopping-sheet/);
-  assert.match(css, /\.household-page/);
-  assert.match(css, /\.camera-sheet__analysis/);
-
+  // The bridge proxies; it never holds a Home Assistant token or the V1 voice routes.
   assert.match(bridge, /"\/api\/shopping"/);
-  assert.match(bridge, /proxy_shopping_write/);
-  assert.match(bridge, /proxy_shopping_events/);
-  assert.match(bridge, /analyze_camera_for_shopping/);
-  assert.match(bridge, /"\/api\/household"/);
+  assert.match(bridge, /"\/api\/home\/events"/);
+  assert.match(bridge, /"\/api\/display"/);
   assert.doesNotMatch(bridge, /HA_TOKEN/);
+  assert.doesNotMatch(bridge, /\/api\/(voice|wake|camera)/);
 
+  // The broker stands alone, keeps its allowlists and reads the token from Keychain.
+  assert.doesNotMatch(broker, /from ["'][^"']*openclaw/i);
+  assert.match(broker, /ALLOWED_IPS/);
+  assert.match(broker, /HOME_ASSISTANT_KEYCHAIN_SERVICE/);
+  assert.match(broker, /const MEDIA_SERVICES: Record<string, string> = \{/);
   assert.match(broker, /SHOPPING_ENTITY_ID/);
   assert.match(broker, /todo\/get_items\?return_response/);
   assert.match(broker, /shopping_list_updated/);
-  assert.match(broker, /CAMERA_ANALYSIS_SCHEMA/);
-  assert.match(broker, /store: false/);
-  assert.match(broker, /SHOPPING_NOTIFY_SERVICES/);
-  assert.match(broker, /HOUSEHOLD_CONTROL_ENTITIES/);
-  assert.match(broker, /HOME_ASSISTANT_KEYCHAIN_SERVICE/);
-  assert.match(broker, /ALLOWED_IPS/);
+
+  // The voice satellite's peripheral socket has no auth: loopback only.
+  assert.match(voiceUnit, /^Environment=PERIPHERAL_HOST=127\.0\.0\.1$/m);
+  // Chromium no longer gets the microphone or V1's extension.
+  assert.doesNotMatch(kioskUnit, /use-fake-ui-for-media-stream|load-extension/);
+  assert.match(install, /disable --now touchscreen-wake\.service/);
 
   assert.match(skill, /canonical list is Home Assistant `todo\.shopping_list`/);
   assert.match(skill, /http:\/\/127\.0\.0\.1:18890\/shopping/);

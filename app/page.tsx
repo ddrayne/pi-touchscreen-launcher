@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { Launcher } from "../components/Launcher";
+import { KitchenScreen } from "../components/KitchenScreen";
 
 export const metadata: Metadata = {
-  title: "Touchscreen Assistant",
-  description: "The voice-first home screen for the Raspberry Pi touchscreen.",
+  title: "Kitchen Screen",
+  description: "The garden's birds, timers, rain and the kitchen speaker on the Pi touchscreen.",
 };
 
 export default function Home() {
-  return <Launcher />;
+  return <KitchenScreen />;
 }
