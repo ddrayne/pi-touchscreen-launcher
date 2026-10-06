@@ -36,7 +36,8 @@ test("server-renders the touchscreen launcher", async () => {
   assert.match(html, /The (?:<!-- -->)?Edinburgh(?:<!-- -->)? window/);
   assert.match(html, /An impression of the last hour/);
   assert.match(html, /The journal is one tap away/);
-  assert.match(html, /frame-garden/);
+  assert.match(html, /frame-clock__time/);
+  assert.match(html, /frame-place__eyebrow/);
   assert.doesNotMatch(html, /A quiet intelligence/);
   assert.doesNotMatch(html, /HA_TOKEN|Bearer\s+[A-Za-z0-9._-]+/);
 });

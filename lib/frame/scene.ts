@@ -1,20 +1,11 @@
 /**
  * The scene reducer: pure projections of what BirdFrame reports into what
- * the painting draws. Nothing here touches the DOM, so every rule is
- * testable and the frame can be scrubbed to any moment.
+ * the board shows. Nothing here touches the DOM, so every rule is testable
+ * and the frame can be scrubbed to any moment.
  *
- * The one law: it may dramatise, it may not fabricate. Every body traces to
- * a species BirdFrame heard in the window; ink is recency; bodies are not
- * counts.
+ * The one law: it may dramatise, it may not fabricate. Every row traces to a
+ * species BirdFrame heard; recency is ink; a dot is a call.
  */
-
-import {
-  archetypeFor,
-  bodiesFor,
-  MAX_BODIES,
-  type Archetype,
-} from "./archetypes.ts";
-import { ANCHORS, type Anchor } from "./garden.ts";
 
 export type Tier = "confirmed" | "probable" | "tentative";
 
@@ -58,21 +49,6 @@ export type FrameSnapshot = {
   newToday: string[];
   /** Activity buckets across the window, oldest first. */
   activity: number[];
-};
-
-export type Body = {
-  key: string;
-  commonName: string;
-  scientificName: string;
-  archetype: Archetype;
-  /** Null for birds that never land. */
-  anchor: Anchor | null;
-  /** 1 at the last call, fading to a ghost across the window. */
-  ink: number;
-  lastHeard: number;
-  index: number;
-  seed: number;
-  facing: 1 | -1;
 };
 
 export type BloomKind = "arrival" | "first-voice" | "new-to-garden";
@@ -308,61 +284,38 @@ export function inkFor(lastHeard: number, now: number, windowMinutes: number): n
   return MIN_INK + (1 - MIN_INK) * (1 - t) ** 1.6;
 }
 
-export type BuildBodiesOptions = {
-  now: number;
-  isNight: boolean;
-  anchors?: Anchor[];
+export type RollRow = {
+  species: FrameSpecies;
+  /** 1 at the last call, fading across the window; never below 0.3 so a row stays readable. */
+  recency: number;
+  rank: number;
+  /** True when the row comes from earlier today because the last hour is silent. */
+  earlier: boolean;
 };
 
 /**
- * Turns the window roster into bodies. Bodies per species follow bodiesFor;
- * the newest species pick their anchors first so a bird that just arrived is
- * never bumped by an older one; night birds appear only after dark.
+ * The roll call: every species in the window, newest first. When the hour is
+ * silent, today's cast stands in, marked as earlier, so the board is never a
+ * blank.
  */
-export function buildBodies(snapshot: FrameSnapshot, options: BuildBodiesOptions): Body[] {
-  const anchors = options.anchors ?? ANCHORS;
-  const roster = snapshot.species
-    .map((species) => ({
-      species,
-      lastHeard: species.lastHeard ?? snapshot.receivedAt - snapshot.windowMinutes * 30_000,
-    }))
-    .filter(({ lastHeard }) => inkFor(lastHeard, options.now, snapshot.windowMinutes) > 0)
+export function rollCall(snapshot: FrameSnapshot | null, now: number, limit = 7): RollRow[] {
+  if (!snapshot) return [];
+  const fallbackLastHeard = snapshot.receivedAt - snapshot.windowMinutes * 30_000;
+  const inWindow = snapshot.species
+    .map((species) => ({ species, lastHeard: species.lastHeard ?? fallbackLastHeard }))
+    .filter(({ lastHeard }) => inkFor(lastHeard, now, snapshot.windowMinutes) > 0)
     .sort((left, right) => right.lastHeard - left.lastHeard);
-
-  const taken = new Set<string>();
-  const bodies: Body[] = [];
-  for (const { species, lastHeard } of roster) {
-    const archetype = archetypeFor(species.commonName);
-    if (archetype.nightOnly && !options.isNight) continue;
-    const count = Math.min(bodiesFor(species.count), 6);
-    const ink = inkFor(lastHeard, options.now, snapshot.windowMinutes);
-    for (let index = 0; index < count && bodies.length < MAX_BODIES; index += 1) {
-      const seed = hashString(`${species.commonName}#${index}`);
-      let anchor: Anchor | null = null;
-      if (archetype.anchors.length) {
-        const allowed = anchors.filter((candidate) => archetype.anchors.includes(candidate.kind));
-        const free = allowed.filter((candidate) => !taken.has(candidate.id));
-        const pool = free.length ? free : allowed;
-        if (pool.length) {
-          anchor = pool[seed % pool.length];
-          taken.add(anchor.id);
-        }
-      }
-      bodies.push({
-        key: `${species.commonName}#${index}`,
-        commonName: species.commonName,
-        scientificName: species.scientificName,
-        archetype,
-        anchor,
-        ink: index === 0 ? ink : ink * (0.92 - index * 0.08),
-        lastHeard,
-        index,
-        seed,
-        facing: anchor ? anchor.facing : seed % 2 ? 1 : -1,
-      });
-    }
+  if (inWindow.length) {
+    return inWindow.slice(0, limit).map(({ species, lastHeard }, rank) => ({
+      species: { ...species, lastHeard },
+      recency: Math.max(0.3, inkFor(lastHeard, now, snapshot.windowMinutes)),
+      rank,
+      earlier: false,
+    }));
   }
-  return bodies;
+  return castFor(snapshot)
+    .slice(0, limit)
+    .map((species, rank) => ({ species, recency: 0.45, rank, earlier: true }));
 }
 
 export type BloomOptions = {

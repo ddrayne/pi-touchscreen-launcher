@@ -111,3 +111,105 @@ export function weatherMood(
     condition,
   };
 }
+
+export type ForecastDay = {
+  /** ISO date or datetime of the day. */
+  date: string;
+  condition: string;
+  high: number | null;
+  low: number | null;
+  /** Chance of precipitation, 0..100, when known. */
+  precipitation: number | null;
+  windSpeed: number | null;
+};
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Normalises the broker's forecast (or Home Assistant's own shape) into days. */
+export function parseForecast(raw: unknown): ForecastDay[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry): ForecastDay[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const record = entry as Record<string, unknown>;
+    const date = record.date ?? record.datetime;
+    if (typeof date !== "string" || !date) return [];
+    return [
+      {
+        date,
+        condition: typeof record.condition === "string" ? record.condition.toLowerCase() : "unknown",
+        high: numberOrNull(record.high ?? record.temperature),
+        low: numberOrNull(record.low ?? record.templow),
+        precipitation: numberOrNull(record.precipitation ?? record.precipitation_probability),
+        windSpeed: numberOrNull(record.windSpeed ?? record.wind_speed),
+      },
+    ];
+  });
+}
+
+export type WeatherGlyphId =
+  | "sun"
+  | "partly"
+  | "cloud"
+  | "rain"
+  | "pour"
+  | "snow"
+  | "fog"
+  | "storm"
+  | "wind"
+  | "night"
+  | "unknown";
+
+export function weatherGlyph(condition: string | undefined, night = false): WeatherGlyphId {
+  const value = (condition || "").toLowerCase();
+  if (value === "clear-night") return "night";
+  if (value === "sunny") return night ? "night" : "sun";
+  if (value === "partlycloudy") return "partly";
+  if (value === "cloudy") return "cloud";
+  if (value === "pouring") return "pour";
+  if (value === "rainy" || value === "snowy-rainy" || value === "hail") return "rain";
+  if (value === "snowy") return "snow";
+  if (value === "fog") return "fog";
+  if (value.startsWith("lightning")) return "storm";
+  if (value.startsWith("windy")) return "wind";
+  if (value === "exceptional") return "sun";
+  return "unknown";
+}
+
+const CONDITION_WORDS: Record<string, string> = {
+  "clear-night": "Clear",
+  sunny: "Sunny",
+  partlycloudy: "Partly cloudy",
+  cloudy: "Cloudy",
+  fog: "Fog",
+  hail: "Hail",
+  lightning: "Thunder",
+  "lightning-rainy": "Thundery rain",
+  pouring: "Heavy rain",
+  rainy: "Rain",
+  snowy: "Snow",
+  "snowy-rainy": "Sleet",
+  windy: "Windy",
+  "windy-variant": "Windy",
+  exceptional: "Unusual",
+};
+
+export function conditionWord(condition: string | undefined): string {
+  if (!condition) return "";
+  return CONDITION_WORDS[condition.toLowerCase()] ?? condition.replace(/-/g, " ");
+}
+
+/** "Today", "Tomorrow", then the weekday. */
+export function forecastDayLabel(date: string, now: number): string {
+  const day = new Date(date);
+  if (Number.isNaN(day.getTime())) return "";
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const target = new Date(day);
+  target.setHours(0, 0, 0, 0);
+  const difference = Math.round((target.getTime() - start.getTime()) / 86_400_000);
+  if (difference === 0) return "Today";
+  if (difference === 1) return "Tomorrow";
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short" }).format(day);
+}

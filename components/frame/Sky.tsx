@@ -13,7 +13,8 @@ import {
   type SkyPalette,
   type SkyPosition,
 } from "../../lib/frame/solar.ts";
-import { FRAME_HEIGHT, FRAME_WIDTH } from "../../lib/frame/garden.ts";
+const FRAME_WIDTH = 1200;
+const FRAME_HEIGHT = 1920;
 
 export const SKY_HORIZON = 0.6;
 
@@ -94,7 +95,7 @@ export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, f
           style={{
             left: sunSpot.x * FRAME_WIDTH,
             top: sunSpot.y * FRAME_HEIGHT,
-            opacity: Math.max(0.12, cover),
+            opacity: Math.max(0.1, cover) * 0.7,
             "--sun-size": `${sunSize}px`,
             "--sun-low": String(sunLow),
           } as CSSProperties}
@@ -132,7 +133,7 @@ export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, f
         ))}
       </div>
       {mood.rain > 0 || mood.snow > 0 ? (
-        <div className="frame-rain" style={{ opacity: mood.rain * 0.42 + mood.snow * 0.3 }} data-snow={mood.snow > 0}>
+        <div className="frame-rain" style={{ opacity: mood.rain * 0.26 + mood.snow * 0.3 }} data-snow={mood.snow > 0}>
           <div className="frame-rain__sheet" />
         </div>
       ) : null}

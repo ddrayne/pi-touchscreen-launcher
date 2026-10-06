@@ -23,44 +23,40 @@ The panel has three states:
 
 | State | When | What is on the glass |
 | --- | --- | --- |
-| Frame | at rest, which is almost always | the painting, a small clock, the honesty line |
-| Home | the glass is touched | the painting recedes behind the clock, shopping, household and a small voice pill; 90 s untouched and the frame returns |
-| Conversation | the wake word, or the pill | the transcript over the dimmed painting |
+| Frame | at rest, which is almost always | the board: the garden's roll call, the weather ahead, what is coming up |
+| Home | the glass is touched | the board recedes behind the clock, shopping, household and a small voice pill; 90 s untouched and the frame returns |
+| Conversation | the wake word, or the pill | the transcript over the dimmed board |
 
-The painting may dramatise but may not fabricate. Every mark traces to a
-BirdFrame field or a line of solar arithmetic:
+The board is BirdFrame-centric and may dramatise but may not fabricate.
+Every mark traces to a BirdFrame field, a Home Assistant entity, or a line of
+solar arithmetic:
 
-- The sky is a continuous palette keyed to the sun's real elevation. The sun
-  travels its real arc for the real day; the moon shows its true lit limb; the
-  star field is the same every night and fades through twilight.
-- Weather comes from the Home Assistant entity the household hub already reads
-  (`cloud_coverage`, `wind_speed`, `wind_bearing` where the integration
-  provides them). Cloud cover sets how many shapes drift and how dense, wind
-  sets their drift and the sway of the trees, rain draws ink hatching, frost
-  pales the lawn. No weather means a clear, still sky.
-- The garden line is drawn from photographs of the real view: the lawn, the
-  bird bath, the rotary dryer, the clipped hedge, the fence, two trees and the
-  tenement beyond with its chimney pots. Its windows glow at night. Canopy
-  density follows the day of the year.
-- Every species in the last hour is a body of its archetype (tit, thrush,
-  gull, swift and so on, `lib/frame/archetypes.ts`), perched where its kind
-  perches or crossing its band of sky. Bodies per species are
-  `1 + log2(calls)`, capped at 24; they are not counts. Recency is ink: full
-  at the last call, fading across the window. A sparrowhawk overhead freezes
-  everything else.
-- A call lands within a second of being heard. The bird flies in, its name
-  sets in display serif, and its Wikimedia portrait blooms in the sky for
-  twenty seconds before sliding into the gallery strip of today's cast. The
-  first call of the day holds a minute; a species never heard in this garden
-  before blooms in gold.
-- Touch a bird, the bloom or a portrait in the gallery and its own recording
+- **The roll call.** Every species heard in the last hour, newest first and
+  largest first, with its Wikimedia portrait (credited, cached on the Pi),
+  the time of its last call, its confidence tier, and one gold dot per call.
+  Rows fade with recency. When a call lands, within a second of being heard,
+  its row rises to the top and its portrait blooms large with the name for
+  twenty seconds before settling. The first call of the day holds a minute; a
+  species never heard in this garden before is marked in gold. When the hour
+  is silent the roll call shows earlier today instead, and says so.
+- **Hear it.** Touch a row or a portrait and that species' own recording
   plays through the Pi's speaker, with the wake word muted for the duration.
-- Ten quiet minutes and the frame cycles today's portraits. After last light,
-  BirdFrame's painting of the day hangs as the closing plate with the day's
-  narration beneath it.
-- A ring pulses from the hedge each time the bridge hears from BirdFrame. When
-  BirdFrame is unreachable the ring stops, the scene fogs, and the caption
-  says so with the time of the last call.
+- **The weather ahead.** Current conditions and a five-day forecast from the
+  household weather entity, drawn as one-weight marks beside the type, with
+  the chance of rain where it matters.
+- **Coming up.** The next few events from the allowlisted household
+  calendars, with bin days marked in gold, and the length of the house list.
+  Put the bin calendar's entity in `HOUSEHOLD_CALENDAR_ENTITIES` and it
+  appears here.
+- **Earlier today.** A strip of the day's other species along the foot.
+- **The sky.** Behind the board, a paper-washed sky keyed to the sun's real
+  elevation, the sun on its arc, the moon with its true lit limb, a star field
+  that is the same every night, clouds that drift with the wind, rain as
+  hatching. After last light, BirdFrame's painting of the day hangs in place
+  of the roll call with the day's narration beneath it.
+- A ring pulses each time the bridge hears from BirdFrame. When BirdFrame is
+  unreachable the ring stops, the board fogs, and the caption says so with
+  the time of the last call.
 
 All motion runs on the compositor (`translate`, `scale`, `rotate`,
 `opacity`): no blur, no backdrop filters. The frame is a 1200 × 1920 stage
@@ -69,7 +65,7 @@ scaled to the viewport, so it is pixel-exact on the Touch Display 2.
 When a conversation opens, the launcher sends the Realtime session one system
 message describing what the screen knows (the latest bird and its tier, the
 last hour's roster, first-ever visitors, the weather), so "what was that
-bird?" is answered from the same data the painting shows.
+bird?" is answered from the same data the board shows.
 
 ## Architecture
 
@@ -411,8 +407,7 @@ at a folder of `<scientific name>.jpg` files for real portraits; otherwise
 placeholders are drawn.
 
 `node scripts/screenshot-frame.mjs [scene…]` renders every scene at panel
-size into `outputs/`, and `node scripts/silhouette-sheet.mjs` renders every
-bird silhouette in every pose for review. Both use Playwright's Chromium.
+size into `outputs/` with Playwright's Chromium.
 
 To exercise the real bridge, `node scripts/mock-birdframe.mjs` stands in for
 BirdFrame (a call every eight seconds), and the bridge runs against it with
@@ -420,8 +415,8 @@ BirdFrame (a call every eight seconds), and the bridge runs against it with
 LAUNCHER_CACHE_ROOT=/tmp/touchscreen-cache python3 bridge/launcher_bridge.py`.
 
 The scene logic is pure and tested: `node --test tests/frame-*.test.mjs`
-covers the solar arithmetic, the palette, the archetype table, the snapshot
-parser, bodies, blooms, quiet mode, weather and the voice context.
+covers the solar arithmetic, the palette, the snapshot parser, the roll call,
+blooms, the agenda, the forecast, weather and the voice context.
 
 ## Diagnostics
 

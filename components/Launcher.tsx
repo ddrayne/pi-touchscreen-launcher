@@ -17,7 +17,7 @@ import {
   updateVoiceConversation,
   type VoiceConversationEntry,
 } from "../lib/voiceConversation";
-import { useFrameClock } from "../lib/frame/clock";
+import { useFrameClock, withFrameTime } from "../lib/frame/clock";
 import { playClip, stopClip } from "../lib/frame/clips";
 import {
   DEFAULT_FRAME_CONFIG,
@@ -189,6 +189,7 @@ type HouseholdHub = {
     windSpeedUnit?: string | null;
     windBearing?: number | null;
   } | null;
+  forecast?: unknown;
   events: Array<{
     calendar: string;
     summary: string;
@@ -522,7 +523,7 @@ export function Launcher() {
         if (!response.ok) throw new Error("status unavailable");
         return response.json() as Promise<ApplianceStatus>;
       }),
-      fetch("/api/household", { cache: "no-store" }).then((response) => {
+      fetch(withFrameTime("/api/household"), { cache: "no-store" }).then((response) => {
         if (!response.ok) throw new Error("Household hub unavailable");
         return response.json() as Promise<HouseholdHub>;
       }),
@@ -1432,7 +1433,8 @@ export function Launcher() {
         now={frameNow}
         config={frameConfig}
         stream={stream}
-        weather={householdHub?.weather ?? null}
+        hub={householdHub}
+        shoppingCount={shopping.activeCount}
         mode={mode}
         muteWake={muteWake}
         onOpenJournal={openBirdframe}

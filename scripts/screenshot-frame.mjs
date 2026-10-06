@@ -32,6 +32,8 @@ const ARTWORK =
     (candidate) => existsSync(candidate),
   ) ||
   "";
+const PORTRAITS =
+  process.env.MOCK_PORTRAITS_DIR || (existsSync("outputs/mock/portraits") ? "outputs/mock/portraits" : "");
 const wanted = process.argv.slice(2);
 const selected = wanted.length ? SCENES.filter((entry) => wanted.includes(entry.name)) : SCENES;
 
@@ -54,7 +56,7 @@ let port = 8780;
 for (const entry of selected) {
   port += 1;
   const mock = spawn(process.execPath, ["scripts/mock-bridge.mjs"], {
-    env: { ...process.env, TZ: TIMEZONE, PORT: String(port), MOCK_SCENE: entry.scene, MOCK_ARTWORK: ARTWORK },
+    env: { ...process.env, TZ: TIMEZONE, PORT: String(port), MOCK_SCENE: entry.scene, MOCK_ARTWORK: ARTWORK, MOCK_PORTRAITS_DIR: PORTRAITS },
     stdio: ["ignore", "inherit", "inherit"],
   });
   try {

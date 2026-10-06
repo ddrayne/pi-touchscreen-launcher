@@ -14,8 +14,6 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, resolve } from "node:path";
 
-import { archetypeFor } from "../lib/frame/archetypes.ts";
-import { shapesToSvg, silhouetteShapes } from "../components/frame/silhouettes.ts";
 
 const ROOT = resolve(new URL("..", import.meta.url).pathname);
 const STATIC = process.env.MOCK_STATIC || join(ROOT, "dist-appliance");
@@ -45,16 +43,14 @@ const SCENES = {
     latestAgoMs: 20_000,
     weather: "sunny",
     arrivals: [
-      ["European Robin", "Erithacus rubecula", 0.86],
       ["Song Thrush", "Turdus philomelos", 0.9],
-      ["Eurasian Wren", "Troglodytes troglodytes", 0.82],
-      ["Eurasian Blue Tit", "Cyanistes caeruleus", 0.78],
-      ["Common Wood-Pigeon", "Columba palumbus", 0.93],
-      ["Common Swift", "Apus apus", 0.71],
-      ["Eurasian Blackbird", "Turdus merula", 0.91],
-      ["Great Tit", "Parus major", 0.8],
-      ["European Goldfinch", "Carduelis carduelis", 0.76],
+      ["European Greenfinch", "Chloris chloris", 0.86],
       ["Herring Gull", "Larus argentatus", 0.7],
+      ["Grey Heron", "Ardea cinerea", 0.82],
+      ["Eurasian Blackbird", "Turdus merula", 0.91],
+      ["Dunnock", "Prunella modularis", 0.78],
+      ["Eurasian Curlew", "Numenius arquata", 0.74],
+      ["European Robin", "Erithacus rubecula", 0.86],
     ],
     intervalMs: 6_000,
   },
@@ -74,7 +70,7 @@ const SCENES = {
     arrivals: [["Eurasian Sparrowhawk", "Accipiter nisus", 0.77]],
     intervalMs: 3_000,
   },
-  "summer-noon": { latestAgoMs: 90_000, weather: "sunny", arrivals: [["Common Swift", "Apus apus", 0.74]], intervalMs: 2_000 },
+  "summer-noon": { latestAgoMs: 90_000, weather: "sunny", arrivals: [["Herring Gull", "Larus argentatus", 0.74]], intervalMs: 2_000 },
 };
 
 const WEATHER = {
@@ -165,13 +161,50 @@ function arrival(index, now) {
   };
 }
 
-function household() {
+const FORECASTS = {
+  sunny: ["sunny", "partlycloudy", "rainy", "cloudy", "sunny"],
+  partlycloudy: ["partlycloudy", "rainy", "cloudy", "sunny", "partlycloudy"],
+  cloudy: ["cloudy", "rainy", "pouring", "cloudy", "partlycloudy"],
+  pouring: ["pouring", "rainy", "windy", "partlycloudy", "sunny"],
+  "clear-night": ["partlycloudy", "sunny", "cloudy", "rainy", "partlycloudy"],
+  snowy: ["snowy", "snowy", "cloudy", "sunny", "partlycloudy"],
+};
+
+function forecast(now) {
+  const base = WEATHER[scene.weather] ?? WEATHER.partlycloudy;
+  const conditions = FORECASTS[scene.weather] ?? FORECASTS.partlycloudy;
+  return conditions.map((condition, index) => {
+    const day = new Date(now);
+    day.setHours(12, 0, 0, 0);
+    day.setDate(day.getDate() + index);
+    const swing = [0, 1, -2, 2, 1][index];
+    return {
+      date: `${stamp(day.getTime()).date}T12:00:00`,
+      condition,
+      high: Math.round(base.temperature + 4 + swing),
+      low: Math.round(base.temperature - 3 + swing),
+      precipitation: condition.includes("rain") || condition === "pouring" ? 70 : condition === "snowy" ? 60 : 10,
+      windSpeed: base.windSpeed,
+    };
+  });
+}
+
+function household(now) {
   const weather = WEATHER[scene.weather] ?? WEATHER.partlycloudy;
+  const day = (offset, hour) => {
+    const date = new Date(now);
+    date.setDate(date.getDate() + offset);
+    const { date: d } = stamp(date.getTime());
+    return hour === undefined ? d : `${d}T${String(hour).padStart(2, "0")}:30:00`;
+  };
   return {
     weather: { entityId: "weather.home", name: "Home", unit: "°C", windSpeedUnit: "km/h", ...weather },
+    forecast: forecast(now),
     events: [
-      { calendar: "calendar.household", summary: "Bins out", start: "2026-10-07", end: "2026-10-08", allDay: true },
-      { calendar: "calendar.household", summary: "Piano lesson", start: "2026-10-07T16:30:00", end: "2026-10-07T17:00:00", allDay: false },
+      { calendar: "calendar.workday", summary: "Bins out · green and blue", start: day(1), end: day(2), allDay: true },
+      { calendar: "calendar.household", summary: "Piano lesson", start: day(1, 16), end: day(1, 17), allDay: false },
+      { calendar: "calendar.household", summary: "Dentist", start: day(3, 9), end: day(3, 10), allDay: false },
+      { calendar: "calendar.workday", summary: "Garden waste collection", start: day(8), end: day(9), allDay: true },
     ],
     controls: [
       { entityId: "light.kitchen", name: "Kitchen", state: "on", active: true },
@@ -196,12 +229,15 @@ const shopping = {
 };
 
 function placeholderPortrait(scientificName) {
-  const archetype = archetypeFor(scientificName);
-  const shapes = silhouetteShapes(archetype.silhouette, "perched");
+  const initials = scientificName
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((word) => word.slice(0, 1).toUpperCase())
+    .join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="800" height="800">
 <defs><radialGradient id="g" cx="40%" cy="35%"><stop offset="0" stop-color="#f7f3e6"/><stop offset="1" stop-color="#c9d5c7"/></radialGradient></defs>
 <rect width="400" height="400" fill="url(#g)"/>
-<g transform="translate(90 90) scale(2.2)">${shapesToSvg(shapes, "#1c3a31")}</g>
+<text x="200" y="232" text-anchor="middle" font-family="Georgia, serif" font-size="120" fill="#1c3a31" opacity=".55">${initials}</text>
 </svg>`;
 }
 
@@ -310,7 +346,7 @@ const server = createServer(async (request, response) => {
     if (clip && existsSync(clip)) return sendFile(response, clip, "audio/ogg");
     return json(response, 404, { error: "no clip" });
   }
-  if (path === "/api/household") return json(response, 200, household());
+  if (path === "/api/household") return json(response, 200, household(now));
   if (path === "/api/shopping") return json(response, 200, shopping);
   if (path === "/api/shopping/events") {
     const send = sse(response);

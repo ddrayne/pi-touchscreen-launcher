@@ -5,7 +5,30 @@ on 6 October 2026 (`1e36cfb`). It follows the conversation that produced
 `docs/LIVING_FRAME.md` in `birdframe-display`, and moves the centre of that plan into
 this project.
 
-**Status:** first build shipped on this branch, 6 October 2026 · **Last updated:** 2026-10-06
+**Status:** second build on this branch, 6 October 2026 · **Last updated:** 2026-10-06
+
+### The second build: the board
+
+After seeing the first build the owner asked for a real rethink: more
+abstract, more clearly about the species, with actual images rather than a
+drawn garden and generic silhouettes, and with the useful household things
+back around the birds. The painting became a board. The sky stays as a
+paper-washed tint behind it; the garden line, the archetype silhouettes and
+the inhabitants layer are gone (they remain in git history). In their place:
+
+- the roll call: the hour's species as a typographic list with Wikimedia
+  portraits, one gold dot per call, rows fading with recency, the newest
+  blooming large when a call lands (§3.5, §3.7 re-expressed);
+- the weather ahead: conditions and a five-day forecast from the Home
+  Assistant entity, drawn as one-weight marks;
+- coming up: the household calendars with bin days marked, and the house
+  list's length;
+- earlier today as a strip along the foot; the night plate, the pulse, the
+  fog and the honesty line as before.
+
+Species-accurate silhouettes (PhyloPic, by scientific name) remain an option
+for a later, more abstract variant; the portrait cache in the bridge would
+serve them the same way.
 
 ### What shipped in the first build
 

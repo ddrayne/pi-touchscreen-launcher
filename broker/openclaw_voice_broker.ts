@@ -1043,6 +1043,47 @@ function dateValue(value: unknown): string {
   return "";
 }
 
+let forecastCache: { at: number; days: JsonRecord[] } = { at: 0, days: [] };
+const FORECAST_CACHE_MS = 30 * 60_000;
+
+/** The daily forecast for the household weather entity, cached for half an hour. */
+async function getWeatherForecast(): Promise<JsonRecord[]> {
+  if (Date.now() - forecastCache.at < FORECAST_CACHE_MS) return forecastCache.days;
+  try {
+    const result = asRecord(
+      await homeAssistantJson("/api/services/weather/get_forecasts?return_response", {
+        entity_id: HOUSEHOLD_WEATHER_ENTITY,
+        type: "daily",
+      }),
+    );
+    const response = asRecord(asRecord(result.service_response)[HOUSEHOLD_WEATHER_ENTITY]);
+    const days = (Array.isArray(response.forecast) ? response.forecast : [])
+      .map(asRecord)
+      .flatMap((entry): JsonRecord[] => {
+        if (typeof entry.datetime !== "string") return [];
+        return [
+          {
+            date: entry.datetime,
+            condition: typeof entry.condition === "string" ? entry.condition : "unknown",
+            high: typeof entry.temperature === "number" ? entry.temperature : null,
+            low: typeof entry.templow === "number" ? entry.templow : null,
+            precipitation:
+              typeof entry.precipitation_probability === "number"
+                ? entry.precipitation_probability
+                : null,
+            windSpeed: typeof entry.wind_speed === "number" ? entry.wind_speed : null,
+          },
+        ];
+      })
+      .slice(0, 7);
+    forecastCache = { at: Date.now(), days };
+  } catch (error) {
+    console.error(`Weather forecast unavailable: ${safeError(error)}`);
+    forecastCache = { at: Date.now() - FORECAST_CACHE_MS + 5 * 60_000, days: forecastCache.days };
+  }
+  return forecastCache.days;
+}
+
 async function getHouseholdHub(): Promise<JsonRecord> {
   const states = await homeAssistantJson("/api/states");
   const stateList = Array.isArray(states) ? states.map(asRecord) : [];
@@ -1087,6 +1128,7 @@ async function getHouseholdHub(): Promise<JsonRecord> {
     .flat()
     .sort((left, right) => String(left.start).localeCompare(String(right.start)))
     .slice(0, 8);
+  const forecast = weatherState ? await getWeatherForecast() : [];
   const controls = HOUSEHOLD_CONTROL_ENTITIES.flatMap((entityId): JsonRecord[] => {
     const state = byEntityId.get(entityId);
     if (!state || state.state === "unavailable") return [];
@@ -1138,6 +1180,7 @@ async function getHouseholdHub(): Promise<JsonRecord> {
               : null,
         }
       : null,
+    forecast,
     events,
     controls,
     refreshedAt: new Date().toISOString(),

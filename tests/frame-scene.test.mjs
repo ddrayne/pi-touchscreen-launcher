@@ -2,56 +2,25 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { archetypeIdFor, bodiesFor, MAX_BODIES } from "../lib/frame/archetypes.ts";
-import { ANCHORS } from "../lib/frame/garden.ts";
+import { agendaFor } from "../lib/frame/agenda.ts";
 import {
   applyDetection,
   bloomIsLeaving,
-  buildBodies,
   castFor,
   inkFor,
   nextBloom,
   parseBirdframeTime,
   parseSnapshot,
   quietFor,
+  rollCall,
 } from "../lib/frame/scene.ts";
-import { weatherMood } from "../lib/frame/weather.ts";
+import { conditionWord, forecastDayLabel, parseForecast, weatherGlyph, weatherMood } from "../lib/frame/weather.ts";
 
 async function fixture(name) {
   return JSON.parse(await readFile(new URL(`../fixtures/${name}`, import.meta.url), "utf8"));
 }
 
 const RECEIVED = new Date(2026, 9, 6, 7, 42, 10).getTime();
-
-test("species map to archetypes by name and family", () => {
-  assert.equal(archetypeIdFor("Eurasian Blackbird"), "thrush");
-  assert.equal(archetypeIdFor("European Robin"), "robin");
-  assert.equal(archetypeIdFor("Eurasian Blue Tit"), "tit");
-  assert.equal(archetypeIdFor("Long-tailed Tit"), "tit");
-  assert.equal(archetypeIdFor("Common Wood-Pigeon"), "pigeon");
-  assert.equal(archetypeIdFor("Herring Gull"), "gull");
-  assert.equal(archetypeIdFor("Eurasian Magpie"), "corvid");
-  assert.equal(archetypeIdFor("Common Swift"), "aerial");
-  assert.equal(archetypeIdFor("Eurasian Sparrowhawk"), "raptor");
-  assert.equal(archetypeIdFor("Eurasian Wren"), "skulker");
-  assert.equal(archetypeIdFor("Dunnock"), "skulker");
-  assert.equal(archetypeIdFor("House Sparrow"), "gang");
-  assert.equal(archetypeIdFor("Common Chiffchaff"), "warbler");
-  assert.equal(archetypeIdFor("European Goldfinch"), "finch");
-  assert.equal(archetypeIdFor("Great Spotted Woodpecker"), "woodpecker");
-  assert.equal(archetypeIdFor("Grey Heron"), "wader");
-  assert.equal(archetypeIdFor("Tawny Owl"), "night");
-  assert.equal(archetypeIdFor("Pied Wagtail"), "default");
-  assert.equal(archetypeIdFor("Something Unheard Of"), "default");
-});
-
-test("bodies are not counts", () => {
-  assert.equal(bodiesFor(0), 0);
-  assert.equal(bodiesFor(1), 1);
-  assert.equal(bodiesFor(2), 2);
-  assert.equal(bodiesFor(3), 2);
-  assert.equal(bodiesFor(40), 6);
-});
 
 test("BirdFrame times are read on the local clock and roll back across midnight", () => {
   const received = new Date(2026, 9, 6, 0, 5, 0).getTime();
@@ -82,43 +51,6 @@ test("ink is recency", () => {
   assert.ok(inkFor(now, now, 60) > 0.99);
   assert.ok(inkFor(now - 30 * 60_000, now, 60) > 0.3 && inkFor(now - 30 * 60_000, now, 60) < 0.6);
   assert.equal(inkFor(now - 61 * 60_000, now, 60), 0);
-});
-
-test("bodies follow the roster, take distinct perches and never exceed the cap", async () => {
-  const snapshot = parseSnapshot(await fixture("now-morning.json"), RECEIVED);
-  const bodies = buildBodies(snapshot, { now: RECEIVED, isNight: false });
-  assert.ok(bodies.length > 9 && bodies.length <= MAX_BODIES, `${bodies.length} bodies`);
-  const blackbirds = bodies.filter((body) => body.commonName === "Eurasian Blackbird");
-  assert.equal(blackbirds.length, bodiesFor(5));
-  const perched = bodies.filter((body) => body.anchor);
-  const ids = perched.map((body) => body.anchor.id);
-  assert.equal(new Set(ids).size, ids.length, "no two bodies share a perch while perches remain");
-  for (const body of perched) {
-    assert.ok(body.archetype.anchors.includes(body.anchor.kind), `${body.commonName} on ${body.anchor.kind}`);
-  }
-  const gull = bodies.find((body) => body.commonName === "Herring Gull");
-  assert.ok(gull.anchor === null || ["ridge", "chimney"].includes(gull.anchor.kind));
-  assert.equal(bodies[0].commonName, "Eurasian Blackbird", "the newest species comes first");
-  assert.ok(bodies[0].ink > bodies[bodies.length - 1].ink);
-});
-
-test("night birds only appear after dark and a huge roster is capped", async () => {
-  const raw = await fixture("now-morning.json");
-  raw.window_species = [
-    { common_name: "Tawny Owl", scientific_name: "Strix aluco", count: 2, tier: "confirmed" },
-    ...Array.from({ length: 30 }, (_, index) => ({
-      common_name: `Finch ${index}`,
-      scientific_name: `Fringilla ${index}`,
-      count: 64,
-      tier: "confirmed",
-    })),
-  ];
-  const snapshot = parseSnapshot(raw, RECEIVED);
-  const day = buildBodies(snapshot, { now: RECEIVED, isNight: false });
-  assert.ok(!day.some((body) => body.commonName === "Tawny Owl"));
-  assert.equal(day.length, MAX_BODIES);
-  const night = buildBodies(snapshot, { now: RECEIVED, isNight: true });
-  assert.ok(night.some((body) => body.commonName === "Tawny Owl"));
 });
 
 test("the newest call blooms once, repeats stay calm, first-ever visitors are gold", async () => {
@@ -185,7 +117,61 @@ test("weather becomes a mood and absence is a still sky", () => {
   assert.ok(Math.abs(frost.cloud - 0.12) < 1e-9);
 });
 
-test("every anchor kind in the garden is one an archetype can use", () => {
-  const kinds = new Set(ANCHORS.map((anchor) => anchor.kind));
-  assert.ok(kinds.has("hedge") && kinds.has("canopy") && kinds.has("lawn"));
+test("the roll call lists the hour newest first and falls back to today", async () => {
+  const snapshot = parseSnapshot(await fixture("now-morning.json"), RECEIVED, await fixture("today-morning.json"));
+  const rows = rollCall(snapshot, RECEIVED);
+  assert.equal(rows.length, 7);
+  assert.equal(rows[0].species.commonName, "Eurasian Blackbird");
+  assert.equal(rows[1].species.commonName, "European Robin");
+  assert.ok(rows[0].recency > rows[6].recency);
+  assert.ok(rows.every((row) => !row.earlier));
+  const later = rollCall(snapshot, RECEIVED + 2 * 60 * 60_000);
+  assert.ok(later.length > 0, "a silent hour shows today's cast");
+  assert.ok(later.every((row) => row.earlier));
+  assert.deepEqual(rollCall(null, RECEIVED), []);
+});
+
+test("the agenda labels days, keeps bins, and drops what has passed", () => {
+  const now = new Date(2026, 9, 6, 9, 10).getTime();
+  const items = agendaFor(
+    [
+      { calendar: "c", summary: "Bins out", start: "2026-10-07", end: "2026-10-08", allDay: true },
+      { calendar: "c", summary: "Piano lesson", start: "2026-10-07T16:30:00", end: "2026-10-07T17:00:00", allDay: false },
+      { calendar: "c", summary: "Yesterday's thing", start: "2026-10-05T10:00:00", end: "2026-10-05T11:00:00", allDay: false },
+      { calendar: "c", summary: "Dentist", start: "2026-10-09T09:30:00", end: "2026-10-09T10:00:00", allDay: false },
+      { calendar: "c", summary: "Garden waste collection", start: "2026-10-20", end: "2026-10-21", allDay: true },
+      { calendar: "c", summary: "Breakfast club", start: "2026-10-06T08:00:00", end: "2026-10-06T09:30:00", allDay: false },
+    ],
+    now,
+  );
+  assert.deepEqual(
+    items.map((item) => [item.summary, item.when, item.kind]),
+    [
+      ["Breakfast club", "Today 08:00", "event"],
+      ["Bins out", "Tomorrow", "bins"],
+      ["Piano lesson", "Tomorrow 16:30", "event"],
+      ["Dentist", "Friday 09:30", "event"],
+    ],
+  );
+  assert.equal(agendaFor([], now).length, 0);
+});
+
+test("the forecast normalises both shapes and names the days", () => {
+  const now = new Date(2026, 9, 6, 9, 10).getTime();
+  const days = parseForecast([
+    { datetime: "2026-10-06T12:00:00+01:00", condition: "rainy", temperature: 12.4, templow: 7.1, precipitation_probability: 60 },
+    { date: "2026-10-07T12:00:00", condition: "Sunny", high: 14, low: 6, precipitation: 10 },
+    { nonsense: true },
+  ]);
+  assert.equal(days.length, 2);
+  assert.equal(days[0].high, 12.4);
+  assert.equal(days[0].precipitation, 60);
+  assert.equal(days[1].condition, "sunny");
+  assert.equal(forecastDayLabel(days[0].date, now), "Today");
+  assert.equal(forecastDayLabel(days[1].date, now), "Tomorrow");
+  assert.equal(forecastDayLabel("2026-10-09T12:00:00", now), "Fri");
+  assert.equal(weatherGlyph("partlycloudy"), "partly");
+  assert.equal(weatherGlyph("sunny", true), "night");
+  assert.equal(weatherGlyph("lightning-rainy"), "storm");
+  assert.equal(conditionWord("snowy-rainy"), "Sleet");
 });

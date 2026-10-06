@@ -208,6 +208,15 @@
   }
 }
 
+/* A paper wash over the sky: the board is read, so the sky is a tint. */
+.frame-wash {
+  position: absolute;
+  inset: 0;
+  background: rgb(var(--frame-paper-rgb));
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .frame-fog {
   position: absolute;
   inset: 0;
@@ -215,468 +224,7 @@
   pointer-events: none;
 }
 
-/* Garden --------------------------------------------------------------- */
-
-.frame-garden {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-.frame-garden__far {
-  fill: rgb(var(--frame-ink-rgb) / calc(0.4 + var(--frame-darkness) * 0.3));
-}
-
-.frame-garden__windows rect {
-  fill: rgb(var(--frame-paper-rgb) / 0.32);
-}
-
-.frame-garden__windows rect[data-lit="true"] {
-  fill: rgb(255 212 136 / 0.92);
-}
-
-.frame-garden__tree polygon {
-  fill: rgb(var(--frame-ink-rgb) / 0.92);
-}
-
-.frame-garden__branches line {
-  stroke: rgb(var(--frame-ink-rgb) / 0.9);
-  stroke-width: 7;
-  stroke-linecap: round;
-}
-
-.frame-garden__branches--thick line {
-  stroke-width: 10;
-}
-
-.frame-garden__canopy circle {
-  fill: rgb(var(--frame-ink-rgb) / 0.86);
-}
-
-.frame-garden__leaves {
-  transform-box: fill-box;
-  transform-origin: 50% 100%;
-  animation: frame-sway calc(9.7s / (0.45 + var(--frame-wind) * 1.6)) ease-in-out infinite alternate;
-}
-
-.frame-garden__tree--west .frame-garden__leaves {
-  animation-duration: calc(12.3s / (0.45 + var(--frame-wind) * 1.6));
-  animation-delay: -4s;
-}
-
-@keyframes frame-sway {
-  from {
-    rotate: -0.5deg;
-  }
-
-  to {
-    rotate: 0.5deg;
-  }
-}
-
-.frame-garden__fence line {
-  stroke: rgb(var(--frame-ink-rgb) / 0.55);
-  stroke-width: 6;
-}
-
-.frame-garden__fence rect {
-  fill: rgb(var(--frame-ink-rgb) / 0.5);
-}
-
-.frame-garden__hedge {
-  fill: rgb(var(--frame-ink-rgb) / 0.95);
-}
-
-.frame-garden__lawn {
-  fill: var(--frame-lawn);
-}
-
-.frame-garden__dryer line {
-  stroke: rgb(var(--frame-ink-rgb) / 0.85);
-  stroke-width: 4;
-  stroke-linecap: round;
-}
-
-.frame-garden__dryer line:first-child {
-  stroke-width: 7;
-}
-
-.frame-garden__bath * {
-  fill: rgb(var(--frame-ink-rgb) / 0.88);
-}
-
-.frame-garden__ferns path {
-  fill: rgb(var(--frame-ink-rgb) / 0.8);
-}
-
-.frame-garden__roses ellipse {
-  fill: rgb(var(--frame-ink-rgb) / 0.78);
-}
-
-.frame-garden__bloom {
-  fill: rgb(198 70 112 / calc(0.9 - var(--frame-darkness) * 0.75));
-}
-
-/* Inhabitants ---------------------------------------------------------- */
-
-.frame-inhabitants {
-  position: absolute;
-  inset: 0;
-}
-
-.frame-body {
-  --scale: 1;
-  position: absolute;
-  width: 100px;
-  height: 100px;
-  transform-origin: 50px 92px;
-  color: rgb(var(--frame-ink-rgb));
-  cursor: pointer;
-  will-change: translate;
-}
-
-.frame-body__svg {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  fill: currentColor;
-  stroke: currentColor;
-}
-
-/* A thin paper halo, like the knife line round a woodblock figure, so a bird
-   still reads against the canopy. */
-.frame-body__svg ellipse,
-.frame-body__svg circle,
-.frame-body__svg path {
-  paint-order: stroke;
-  stroke: rgb(var(--frame-paper-rgb) / 0.85);
-  stroke-width: 2.4;
-  stroke-linejoin: round;
-}
-
-.frame-body__pose {
-  opacity: 0;
-}
-
-.frame-body[data-flying="true"] .frame-body__pose--1 {
-  animation: frame-flap-1 var(--flap) steps(1) infinite;
-}
-
-.frame-body[data-flying="true"] .frame-body__pose--2 {
-  animation: frame-flap-2 var(--flap) steps(1) infinite;
-}
-
-.frame-body[data-flying="true"] .frame-body__pose--3 {
-  animation: frame-flap-3 var(--flap) steps(1) infinite;
-}
-
-.frame-body[data-flying="true"] .frame-body__pose--4 {
-  animation: frame-flap-4 var(--flap) steps(1) infinite;
-}
-
-@keyframes frame-flap-1 {
-  0%, 24.9% { opacity: 1; }
-  25%, 100% { opacity: 0; }
-}
-
-@keyframes frame-flap-2 {
-  0%, 24.9% { opacity: 0; }
-  25%, 49.9% { opacity: 1; }
-  50%, 100% { opacity: 0; }
-}
-
-@keyframes frame-flap-3 {
-  0%, 49.9% { opacity: 0; }
-  50%, 74.9% { opacity: 1; }
-  75%, 100% { opacity: 0; }
-}
-
-@keyframes frame-flap-4 {
-  0%, 74.9% { opacity: 0; }
-  75%, 100% { opacity: 1; }
-}
-
-.frame-body[data-flying="false"][data-idle="hop"] {
-  animation: frame-hop 7.3s ease-in-out infinite;
-  animation-delay: calc(var(--seed) * -7.3s);
-}
-
-.frame-body[data-flying="false"][data-idle="bob"] {
-  animation: frame-bob 11.1s ease-in-out infinite;
-  animation-delay: calc(var(--seed) * -11.1s);
-}
-
-.frame-body[data-flying="false"][data-idle="flit"] {
-  animation: frame-flit 17.9s steps(1) infinite;
-  animation-delay: calc(var(--seed) * -17.9s);
-}
-
-.frame-body[data-flying="false"][data-idle="turn"] {
-  animation: frame-turn 13.7s ease-in-out infinite;
-  animation-delay: calc(var(--seed) * -13.7s);
-}
-
-.frame-inhabitants[data-frozen="true"] .frame-body {
-  animation-play-state: paused;
-}
-
-@keyframes frame-hop {
-  0%, 80%, 96%, 100% { transform: scale(var(--scale)); }
-  84% { transform: scale(var(--scale)) translate(4px, -7px); }
-  88% { transform: scale(var(--scale)) translate(8px, 0); }
-  92% { transform: scale(var(--scale)) translate(4px, -7px); }
-}
-
-@keyframes frame-bob {
-  0%, 100% { transform: scale(var(--scale)); }
-  50% { transform: scale(var(--scale)) rotate(-3deg); }
-}
-
-@keyframes frame-flit {
-  0%, 44% { transform: scale(var(--scale)); }
-  45%, 92% { transform: scale(var(--scale)) scaleX(-1); }
-  93%, 100% { transform: scale(var(--scale)); }
-}
-
-@keyframes frame-turn {
-  0%, 68%, 100% { transform: scale(var(--scale)); }
-  74%, 92% { transform: scale(var(--scale)) rotate(2.5deg); }
-}
-
-/* The moment ----------------------------------------------------------- */
-
-.frame-bloom {
-  position: absolute;
-  left: 600px;
-  top: 520px;
-  width: 0;
-  height: 0;
-  cursor: pointer;
-}
-
-.frame-bloom__portrait {
-  position: absolute;
-  left: -340px;
-  top: -340px;
-  width: 680px;
-  height: 680px;
-  border-radius: 50%;
-  background: center / cover no-repeat;
-  box-shadow:
-    0 0 0 6px rgb(var(--frame-paper-rgb) / 0.92),
-    0 0 0 7px rgb(var(--frame-ink-rgb) / 0.4);
-  animation: frame-bloom-in 1100ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-
-.frame-bloom[data-kind="new-to-garden"] .frame-bloom__portrait {
-  box-shadow:
-    0 0 0 6px rgb(var(--frame-paper-rgb) / 0.92),
-    0 0 0 11px rgb(var(--frame-gold-rgb) / 0.95);
-}
-
-.frame-bloom__portrait--empty {
-  background: radial-gradient(circle, rgb(var(--frame-paper-rgb) / 0.22) 0 48%, transparent 70%);
-  box-shadow: none;
-}
-
-@keyframes frame-bloom-in {
-  from {
-    opacity: 0;
-    scale: 0.9;
-  }
-
-  to {
-    opacity: 1;
-    scale: 1;
-  }
-}
-
-.frame-bloom[data-quiet="true"] .frame-bloom__portrait {
-  left: -290px;
-  top: -290px;
-  width: 580px;
-  height: 580px;
-  animation: frame-bloom-quiet 12s ease-in-out both;
-}
-
-.frame-bloom[data-quiet="true"] .frame-bloom__text {
-  top: 320px;
-}
-
-@keyframes frame-bloom-quiet {
-  from {
-    opacity: 0;
-    scale: 0.96;
-  }
-
-  12%,
-  88% {
-    opacity: 1;
-    scale: 1;
-  }
-
-  to {
-    opacity: 0;
-    scale: 1.03;
-  }
-}
-
-.frame-bloom[data-leaving="true"] .frame-bloom__portrait {
-  animation: none;
-  transition:
-    translate 900ms cubic-bezier(0.4, 0, 0.6, 1),
-    scale 900ms cubic-bezier(0.4, 0, 0.6, 1),
-    opacity 900ms ease;
-  translate: 0 1150px;
-  scale: 0.16;
-  opacity: 0;
-}
-
-.frame-bloom[data-leaving="true"] .frame-bloom__text {
-  opacity: 0;
-  transition: opacity 500ms ease;
-}
-
-.frame-bloom__ribbon {
-  position: absolute;
-  left: -340px;
-  top: -340px;
-  width: 680px;
-  height: 680px;
-  border: 2px solid rgb(var(--frame-type-rgb) / 0.55);
-  border-radius: 50%;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.frame-bloom[data-playing="true"] .frame-bloom__ribbon {
-  animation: frame-ribbon 1.6s ease-out infinite;
-}
-
-.frame-bloom[data-playing="true"] .frame-bloom__ribbon--late {
-  animation-delay: 0.8s;
-}
-
-@keyframes frame-ribbon {
-  from {
-    opacity: 0.6;
-    scale: 1;
-  }
-
-  to {
-    opacity: 0;
-    scale: calc(1.22 + var(--song-level) * 0.4);
-  }
-}
-
-.frame-bloom__text {
-  position: absolute;
-  left: -560px;
-  top: 372px;
-  width: 1120px;
-  text-align: center;
-  animation: frame-bloom-text 900ms ease 300ms both;
-}
-
-.frame-bloom[data-portrait="false"] .frame-bloom__text {
-  top: -80px;
-}
-
-@keyframes frame-bloom-text {
-  from {
-    opacity: 0;
-    translate: 0 18px;
-  }
-
-  to {
-    opacity: 1;
-    translate: 0 0;
-  }
-}
-
-.frame-bloom__kicker {
-  margin: 0 0 14px;
-  color: rgb(var(--frame-gold-rgb));
-  font-size: 21px;
-  font-weight: 600;
-  letter-spacing: 0.26em;
-  text-transform: uppercase;
-}
-
-.frame-bloom__name {
-  margin: 0;
-  font-family: "Fraunces Variable", Georgia, serif;
-  font-optical-sizing: auto;
-  font-size: 84px;
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  line-height: 1.02;
-}
-
-.frame-bloom__caption {
-  margin: 16px 0 0;
-  font-size: 27px;
-  font-style: italic;
-  opacity: 0.86;
-}
-
-.frame-bloom__credit {
-  margin: 12px 0 0;
-  font-size: 15px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  opacity: 0.6;
-}
-
 /* The gallery, the chrome, the rest ----------------------------------- */
-
-.frame-gallery {
-  position: absolute;
-  right: 0;
-  bottom: 150px;
-  left: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  opacity: calc(1 - var(--frame-darkness) * 0.35);
-}
-
-.frame-gallery__portrait {
-  display: grid;
-  width: 84px;
-  height: 84px;
-  place-items: center;
-  border: 0;
-  border-radius: 50%;
-  padding: 0;
-  background: rgb(var(--frame-paper-rgb) / 0.55) center / cover no-repeat;
-  box-shadow:
-    0 0 0 4px rgb(var(--frame-paper-rgb) / 0.92),
-    0 0 0 5px rgb(var(--frame-ink-rgb) / 0.38);
-  color: rgb(var(--frame-type-rgb));
-  cursor: pointer;
-  font-family: "Fraunces Variable", Georgia, serif;
-  font-size: 32px;
-}
-
-.frame-gallery__portrait[data-tier="tentative"] {
-  opacity: 0.55;
-}
-
-.frame-gallery__portrait[data-active="true"] {
-  box-shadow:
-    0 0 0 4px rgb(var(--frame-paper-rgb) / 0.92),
-    0 0 0 8px rgb(var(--frame-gold-rgb));
-}
-
-.frame-gallery__more {
-  font-size: 22px;
-  letter-spacing: 0.08em;
-  opacity: 0.7;
-}
 
 .frame-place {
   position: absolute;
@@ -740,15 +288,16 @@
 
 .frame-foot {
   position: absolute;
-  right: 150px;
+  right: 64px;
   bottom: 44px;
   left: 64px;
   display: flex;
   justify-content: space-between;
-  font-size: 17px;
-  letter-spacing: 0.22em;
+  font-size: 15px;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   opacity: 0.78;
+  white-space: nowrap;
 }
 
 .frame-foot button {
@@ -760,8 +309,8 @@
 
 .frame-pulse {
   position: absolute;
-  left: 420px;
-  top: 1600px;
+  left: 600px;
+  top: 1900px;
   width: 120px;
   height: 120px;
   margin: -60px 0 0 -60px;
@@ -773,13 +322,13 @@
 
 @keyframes frame-pulse {
   from {
-    opacity: 0.6;
+    opacity: 0.35;
     scale: 0.2;
   }
 
   to {
     opacity: 0;
-    scale: 7;
+    scale: 5;
   }
 }
 
@@ -793,8 +342,8 @@
 .frame-rest {
   position: absolute;
   left: 600px;
-  top: 236px;
-  width: 640px;
+  top: 470px;
+  width: 560px;
   margin: 0;
   translate: -50% 0;
   animation: frame-rest-in 1600ms ease both;
@@ -813,18 +362,22 @@
 }
 
 .frame-rest__plate {
-  width: 640px;
-  height: 853px;
+  width: 560px;
+  height: 746px;
   background: center / cover no-repeat;
   box-shadow:
     0 0 0 10px rgb(var(--frame-paper-rgb) / 0.92),
     0 0 0 11px rgb(var(--frame-ink-rgb) / 0.5);
 }
 
+.frame-rest figcaption {
+  margin: 0 -120px;
+}
+
 .frame-rest__caption {
-  margin: 44px 16px 0;
+  margin: 36px 16px 0;
   font-family: "Fraunces Variable", Georgia, serif;
-  font-size: 30px;
+  font-size: 27px;
   font-style: italic;
   font-weight: 350;
   line-height: 1.3;
@@ -848,4 +401,412 @@
   mix-blend-mode: multiply;
   opacity: 0.17;
   pointer-events: none;
+}
+
+/* The board ------------------------------------------------------------ */
+
+.frame-glyph {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.frame-glyph__fill,
+.frame-glyph__dot {
+  fill: currentColor;
+  stroke: none;
+}
+
+.frame-weather {
+  position: absolute;
+  left: 64px;
+  right: 64px;
+  top: 232px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  border-top: 1px solid rgb(var(--frame-type-rgb) / 0.22);
+  padding-top: 26px;
+}
+
+.frame-weather__now {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.frame-weather__now strong {
+  display: block;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: 64px;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.frame-weather__now span {
+  display: block;
+  margin-top: 8px;
+  font-size: 19px;
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+}
+
+.frame-weather__days {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  gap: 10px;
+  list-style: none;
+}
+
+.frame-weather__days li {
+  display: grid;
+  width: 124px;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.frame-weather__day {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.frame-weather__range {
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+
+.frame-weather__range i {
+  font-style: normal;
+  font-size: 20px;
+  opacity: 0.55;
+}
+
+.frame-weather__days small {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.frame-roll {
+  position: absolute;
+  left: 64px;
+  right: 64px;
+  top: 462px;
+  max-height: 990px;
+  overflow: hidden;
+  mask-image: linear-gradient(180deg, #000 0, #000 920px, transparent 990px);
+}
+
+.frame-roll ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.frame-roll__kicker {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.frame-roll__kicker--gold {
+  color: rgb(var(--frame-gold-rgb));
+  opacity: 1;
+}
+
+.frame-roll__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  border-top: 1px solid rgb(var(--frame-type-rgb) / 0.2);
+  padding: 13px 0;
+  opacity: calc(0.45 + var(--recency) * 0.55);
+  cursor: pointer;
+  animation: frame-row-in 700ms ease both;
+}
+
+.frame-roll__row[data-hero="true"] {
+  border-top: 0;
+  padding: 0 0 26px;
+}
+
+@keyframes frame-row-in {
+  from {
+    opacity: 0;
+    translate: 0 10px;
+  }
+}
+
+.frame-roll__text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.frame-roll__name {
+  margin: 0;
+  overflow: hidden;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.02;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: font-size 900ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.frame-roll__row[data-rank="0"] .frame-roll__name { font-size: 90px; }
+.frame-roll__row[data-rank="1"] .frame-roll__name { font-size: 56px; }
+.frame-roll__row[data-rank="2"] .frame-roll__name { font-size: 50px; }
+.frame-roll__row[data-rank="3"] .frame-roll__name { font-size: 46px; }
+.frame-roll__row[data-rank="4"] .frame-roll__name { font-size: 42px; }
+.frame-roll__row[data-rank="5"] .frame-roll__name { font-size: 38px; }
+.frame-roll__row[data-rank="6"] .frame-roll__name { font-size: 36px; }
+.frame-roll__row[data-bloom="true"] .frame-roll__name {
+  font-size: 96px;
+  white-space: normal;
+}
+
+.frame-roll__meta {
+  margin: 8px 0 0;
+  font-size: 22px;
+  font-style: italic;
+  opacity: 0.82;
+}
+
+.frame-roll__row[data-rank="0"] .frame-roll__meta {
+  font-size: 26px;
+}
+
+.frame-roll__calls {
+  margin-left: 14px;
+  color: rgb(var(--frame-gold-rgb));
+  font-size: 0.6em;
+  font-style: normal;
+  letter-spacing: 0.14em;
+}
+
+.frame-roll__meta em {
+  margin-left: 8px;
+  opacity: 0.7;
+}
+
+.frame-roll__hint {
+  opacity: 0.55;
+}
+
+.frame-roll__portrait {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: rgb(var(--frame-paper-rgb) / 0.55);
+  box-shadow:
+    0 0 0 5px rgb(var(--frame-paper-rgb) / 0.95),
+    0 0 0 6px rgb(var(--frame-type-rgb) / 0.4);
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: 40px;
+  transition:
+    width 900ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    height 900ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.frame-roll__photo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: center / cover no-repeat;
+}
+
+.frame-roll__row[data-rank="0"] .frame-roll__portrait { width: 200px; height: 244px; }
+.frame-roll__row[data-rank="1"] .frame-roll__portrait { width: 104px; height: 127px; }
+.frame-roll__row[data-rank="2"] .frame-roll__portrait { width: 92px; height: 112px; }
+.frame-roll__row[data-rank="3"] .frame-roll__portrait { width: 84px; height: 102px; }
+.frame-roll__row[data-rank="4"] .frame-roll__portrait { width: 78px; height: 95px; }
+.frame-roll__row[data-rank="5"] .frame-roll__portrait { width: 72px; height: 88px; }
+.frame-roll__row[data-rank="6"] .frame-roll__portrait { width: 68px; height: 83px; }
+.frame-roll__row[data-bloom="true"] .frame-roll__portrait { width: 380px; height: 464px; }
+
+.frame-roll__row[data-bloom="true"][data-tier] .frame-roll__portrait {
+  box-shadow:
+    0 0 0 6px rgb(var(--frame-paper-rgb) / 0.95),
+    0 0 0 8px rgb(var(--frame-type-rgb) / 0.45);
+}
+
+.frame-roll__row[data-tier="tentative"] .frame-roll__portrait {
+  opacity: 0.7;
+}
+
+.frame-roll__ribbon {
+  position: absolute;
+  inset: 0;
+  border: 2px solid rgb(var(--frame-type-rgb) / 0.55);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.frame-roll__row[data-playing="true"] .frame-roll__ribbon {
+  animation: frame-ribbon 1.6s ease-out infinite;
+}
+
+.frame-roll__row[data-playing="true"] .frame-roll__ribbon--late {
+  animation-delay: 0.8s;
+}
+
+@keyframes frame-ribbon {
+  from {
+    opacity: 0.6;
+    scale: 1;
+  }
+
+  to {
+    opacity: 0;
+    scale: calc(1.22 + var(--song-level) * 0.4);
+  }
+}
+
+.frame-roll__more {
+  margin: 12px 0 0;
+  font-size: 16px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.frame-agenda {
+  position: absolute;
+  left: 64px;
+  right: 64px;
+  top: 1476px;
+  border-top: 1px solid rgb(var(--frame-type-rgb) / 0.22);
+  padding-top: 18px;
+}
+
+.frame-agenda__kicker {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.frame-agenda ul {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  gap: 10px 44px;
+  list-style: none;
+}
+
+.frame-agenda li {
+  display: grid;
+  gap: 4px;
+}
+
+.frame-agenda__when {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.frame-agenda li strong {
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: 30px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.frame-agenda li[data-kind="bins"] .frame-agenda__when {
+  color: rgb(var(--frame-gold-rgb));
+  opacity: 1;
+}
+
+.frame-agenda li[data-kind="bins"] strong::before {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 0 10px 4px 0;
+  border-radius: 50%;
+  background: rgb(var(--frame-gold-rgb));
+  content: "";
+}
+
+.frame-agenda li[data-kind="list"] strong {
+  opacity: 0.8;
+}
+
+.frame-gallery {
+  position: absolute;
+  right: 64px;
+  bottom: 110px;
+  left: 64px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.frame-gallery__label {
+  margin-right: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.frame-gallery__portrait {
+  display: grid;
+  width: 60px;
+  height: 60px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  background: rgb(var(--frame-paper-rgb) / 0.55) center / cover no-repeat;
+  box-shadow:
+    0 0 0 3px rgb(var(--frame-paper-rgb) / 0.95),
+    0 0 0 4px rgb(var(--frame-type-rgb) / 0.35);
+  color: rgb(var(--frame-type-rgb));
+  cursor: pointer;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-size: 24px;
+}
+
+.frame-gallery__portrait[data-tier="tentative"] {
+  opacity: 0.55;
+}
+
+.frame-gallery__portrait[data-active="true"] {
+  box-shadow:
+    0 0 0 3px rgb(var(--frame-paper-rgb) / 0.95),
+    0 0 0 6px rgb(var(--frame-gold-rgb));
+}
+
+.frame-gallery__more {
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
 }

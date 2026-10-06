@@ -16,7 +16,6 @@
     "db:generate": "drizzle-kit generate",
     "frame:mock": "node scripts/mock-bridge.mjs",
     "frame:shots": "node scripts/screenshot-frame.mjs",
-    "frame:silhouettes": "node scripts/silhouette-sheet.mjs",
     "test:frame": "node --test tests/frame-*.test.mjs"
   },
   "dependencies": {
