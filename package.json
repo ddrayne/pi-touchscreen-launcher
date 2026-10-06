@@ -13,9 +13,15 @@
     "appliance:build": "vite build --config appliance/vite.config.ts",
     "test": "npm run build && node --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern dist-appliance --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "frame:mock": "node scripts/mock-bridge.mjs",
+    "frame:shots": "node scripts/screenshot-frame.mjs",
+    "frame:silhouettes": "node scripts/silhouette-sheet.mjs",
+    "test:frame": "node --test tests/frame-*.test.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/fraunces": "^5.3.0",
+    "@fontsource-variable/newsreader": "^5.3.0",
     "drizzle-orm": "0.45.2",
     "next": "16.2.6",
     "react": "19.2.6",
@@ -32,6 +38,7 @@
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
+    "playwright": "^1.56.1",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",

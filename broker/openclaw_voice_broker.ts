@@ -1118,6 +1118,24 @@ async function getHouseholdHub(): Promise<JsonRecord> {
             typeof weatherAttributes.humidity === "number"
               ? weatherAttributes.humidity
               : null,
+          // The frame paints the air: cloud, wind and its direction, where the
+          // integration provides them.
+          cloudCoverage:
+            typeof weatherAttributes.cloud_coverage === "number"
+              ? weatherAttributes.cloud_coverage
+              : null,
+          windSpeed:
+            typeof weatherAttributes.wind_speed === "number"
+              ? weatherAttributes.wind_speed
+              : null,
+          windSpeedUnit:
+            typeof weatherAttributes.wind_speed_unit === "string"
+              ? weatherAttributes.wind_speed_unit
+              : null,
+          windBearing:
+            typeof weatherAttributes.wind_bearing === "number"
+              ? weatherAttributes.wind_bearing
+              : null,
         }
       : null,
     events,

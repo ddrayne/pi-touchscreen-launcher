@@ -1787,3 +1787,79 @@ button {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* The frame beneath Home and Conversation ------------------------------ */
+
+.launcher[data-mode] {
+  background: transparent;
+}
+
+.launcher[data-mode]::before,
+.launcher[data-mode]::after {
+  display: none;
+}
+
+.launcher[data-mode="home"] .launcher__frame {
+  justify-content: flex-start;
+  gap: 0.5rem;
+}
+
+.launcher[data-mode="home"] .assistant {
+  min-height: 0;
+  flex: 0 0 auto;
+  padding: 1.5rem 0 1rem;
+}
+
+.launcher[data-mode="home"] .assistant__orb-button {
+  width: 8.25rem;
+}
+
+.launcher[data-mode="home"] .assistant__prompt,
+.launcher[data-mode="home"] .assistant__ring--middle,
+.launcher[data-mode="home"] .assistant__ring--inner {
+  display: none;
+}
+
+.launcher[data-mode="home"] .assistant__hint {
+  margin-top: 0.8rem;
+}
+
+.launcher[data-mode="home"] .assistant__status {
+  margin-top: 0.9rem;
+}
+
+.launcher[data-mode="conversation"] .assistant {
+  min-height: 0;
+  padding: 2.5rem 0 2rem;
+}
+
+.launcher[data-mode="conversation"] .assistant__orb-button {
+  width: min(22rem, 44vw);
+}
+
+.bird-card__wrap {
+  position: relative;
+  display: grid;
+}
+
+.bird-card__hear {
+  position: absolute;
+  right: 2rem;
+  bottom: 1.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 99rem;
+  padding: 0.6rem 0.95rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f7f2e6;
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.bird-card__hear[aria-pressed="true"] {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: #1b1408;
+}

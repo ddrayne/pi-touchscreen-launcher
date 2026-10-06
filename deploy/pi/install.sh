@@ -14,6 +14,7 @@ test -x /usr/bin/pocketsphinx_continuous
 /usr/bin/arecord -L | /usr/bin/grep -q '^pipewire$'
 
 install -d "$release_dir" "$app_root/bridge" "$app_root/extension"
+install -d "$HOME/.cache/touchscreen-launcher"
 cp -a "$source_dir/dist-appliance/." "$release_dir/"
 cp -a "$source_dir/extension/." "$app_root/extension/"
 install -m 0755 "$source_dir/bridge/launcher_bridge.py" \
@@ -32,6 +33,10 @@ printf '%s\n' \
   "WAKE_THRESHOLD=${WAKE_THRESHOLD:-1e-19}" \
   "WAKE_COOLDOWN_SECONDS=${WAKE_COOLDOWN_SECONDS:-20}" \
   "WAKE_ALSA_DEVICE=${WAKE_ALSA_DEVICE:-pipewire}" \
+  "LAUNCHER_LATITUDE=${LAUNCHER_LATITUDE:-55.95}" \
+  "LAUNCHER_LONGITUDE=${LAUNCHER_LONGITUDE:--3.19}" \
+  "LAUNCHER_FACING=${LAUNCHER_FACING:-180}" \
+  "LAUNCHER_PLACE=${LAUNCHER_PLACE:-Edinburgh}" \
   >"$HOME/.config/touchscreen-launcher/environment"
 chmod 600 "$HOME/.config/touchscreen-launcher/environment"
 

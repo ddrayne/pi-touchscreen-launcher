@@ -5,7 +5,38 @@ on 6 October 2026 (`1e36cfb`). It follows the conversation that produced
 `docs/LIVING_FRAME.md` in `birdframe-display`, and moves the centre of that plan into
 this project.
 
-**Status:** proposal, nothing implemented · **Last updated:** 2026-10-06
+**Status:** first build shipped on this branch, 6 October 2026 · **Last updated:** 2026-10-06
+
+### What shipped in the first build
+
+The owner chose ink silhouettes, touch-only presence for now, keeping the wake
+word, a garden line drawn from the real view, bundled fonts, and going
+straight to a visible frame before tidying. The branch therefore carries:
+
+- §2 the three states, with the painting as the resting state (`components/frame/`);
+- §3.1 the continuous sky, the sun, the moon's lit limb, the seeded stars;
+- §3.2 weather from the Home Assistant entity, with the broker exposing cloud,
+  wind speed and bearing;
+- §3.3 the garden line drawn from the owner's photographs, with seasonal canopy
+  and lit tenement windows at night;
+- §3.4 parametric silhouettes for sixteen kinds, bodies by `1 + log2(calls)`,
+  recency as ink, arrival flights and sky loops, the sparrowhawk freeze;
+- §3.5 the event stream, the bloom with Wikimedia portrait and credit, first
+  voice and new-to-garden treatments;
+- §3.6 hearing a bird through the speaker with the wake word muted;
+- §3.7 the gallery strip, quiet mode, night rest with the day's painting and
+  narration;
+- §3.8 Fraunces and Newsreader, §3.9 the honesty line;
+- §4 the listening pulse and the fog when BirdFrame is unreachable;
+- §5.3 the backlight route (the schedule that drives it is still to come);
+- §6 the voice pill and the garden context on connect;
+- §7 the bridge stream, the portrait, painting and snapshot caches;
+- §8 the mock bridge, the time scrub, the panel-size screenshot harness and
+  tests for the pure scene logic.
+
+Still to do from this document: the backlight schedule keyed to the sun,
+presence (§5.1) and the room's own sound (§5.2), the component split and
+scaffold removal (§8), and the fixes in §9 not yet taken.
 
 ---
 

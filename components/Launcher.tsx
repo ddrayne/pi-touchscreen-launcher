@@ -17,24 +17,36 @@ import {
   updateVoiceConversation,
   type VoiceConversationEntry,
 } from "../lib/voiceConversation";
+import { useFrameClock } from "../lib/frame/clock";
+import { playClip, stopClip } from "../lib/frame/clips";
+import {
+  DEFAULT_FRAME_CONFIG,
+  loadFrameConfig,
+  type FrameConfig,
+} from "../lib/frame/config";
+import { gardenContext } from "../lib/frame/context";
+import { tierWord } from "../lib/frame/scene";
+import { useBirdframeStream } from "../lib/frame/stream";
+import { Frame, type FrameMode } from "./frame/Frame";
 
-type WindowSpecies = {
-  common_name: string;
-  count: number;
-  tier?: string;
-};
+const FRAME_WIDTH = 1200;
+const FRAME_HEIGHT = 1920;
+const HOME_IDLE_MS = 90_000;
 
-type BirdframeNow = {
-  latest?: {
-    common_name?: string;
-    confidence?: number;
-    at?: string;
-    seconds_ago?: number;
-  };
-  today_species_count?: number;
-  window_minutes?: number;
-  window_species?: WindowSpecies[];
-};
+function initialMode(): FrameMode {
+  if (typeof window === "undefined") return "frame";
+  const requested = new URLSearchParams(window.location.search).get("mode");
+  return requested === "home" || requested === "conversation" ? requested : "frame";
+}
+
+function greetingFor(at: number): string {
+  const hour = new Date(at).getHours();
+  if (hour < 5) return "Still up?";
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  if (hour < 22) return "Good evening";
+  return "Goodnight";
+}
 
 type ApplianceStatus = {
   gatewayReady?: boolean;
@@ -172,6 +184,10 @@ type HouseholdHub = {
     temperature: number | null;
     unit: string;
     humidity: number | null;
+    cloudCoverage?: number | null;
+    windSpeed?: number | null;
+    windSpeedUnit?: string | null;
+    windBearing?: number | null;
   } | null;
   events: Array<{
     calendar: string;
@@ -187,17 +203,6 @@ type HouseholdHub = {
     active: boolean;
   }>;
   refreshedAt: string;
-};
-
-const fallbackBirds: BirdframeNow = {
-  latest: {
-    common_name: "The garden is listening",
-    confidence: 0,
-    at: "",
-  },
-  today_species_count: 0,
-  window_minutes: 60,
-  window_species: [],
 };
 
 const emptyShopping: ShoppingSnapshot = {
@@ -377,9 +382,13 @@ function formatHubEventStart(start: string, allDay: boolean): string {
 }
 
 export function Launcher() {
-  const [now, setNow] = useState(() => new Date());
   const [status, setStatus] = useState<ApplianceStatus>({});
-  const [birds, setBirds] = useState<BirdframeNow>(fallbackBirds);
+  const [mode, setMode] = useState<FrameMode>(initialMode);
+  const [lastTouch, setLastTouch] = useState(0);
+  const [frameConfig, setFrameConfig] = useState<FrameConfig>(DEFAULT_FRAME_CONFIG);
+  const [playingLatest, setPlayingLatest] = useState(false);
+  const frameNow = useFrameClock(1000);
+  const stream = useBirdframeStream();
   const [householdHub, setHouseholdHub] = useState<HouseholdHub | null>(null);
   const [hubPage, setHubPage] = useState<0 | 1>(0);
   const [hubBusy, setHubBusy] = useState<string | null>(null);
@@ -415,6 +424,7 @@ export function Launcher() {
   const [editingShoppingItem, setEditingShoppingItem] =
     useState<ShoppingItem | null>(null);
   const lastWakeSequence = useRef(0);
+  const contextRef = useRef<() => string | null>(() => null);
   const voiceSession = useRef<InlineRealtimeVoice | null>(null);
   const newShoppingItemInput = useRef<HTMLInputElement | null>(null);
   const flushingShoppingOutbox = useRef(false);
@@ -507,14 +517,10 @@ export function Launcher() {
   }, [acceptShoppingSnapshot]);
 
   const refresh = useCallback(async () => {
-    const [statusResult, birdResult, householdResult] = await Promise.allSettled([
+    const [statusResult, householdResult] = await Promise.allSettled([
       fetch("/api/status", { cache: "no-store" }).then((response) => {
         if (!response.ok) throw new Error("status unavailable");
         return response.json() as Promise<ApplianceStatus>;
-      }),
-      fetch("/api/birdframe", { cache: "no-store" }).then((response) => {
-        if (!response.ok) throw new Error("BirdFrame unavailable");
-        return response.json() as Promise<BirdframeNow>;
       }),
       fetch("/api/household", { cache: "no-store" }).then((response) => {
         if (!response.ok) throw new Error("Household hub unavailable");
@@ -523,7 +529,6 @@ export function Launcher() {
     ]);
 
     if (statusResult.status === "fulfilled") setStatus(statusResult.value);
-    if (birdResult.status === "fulfilled") setBirds(birdResult.value);
     if (householdResult.status === "fulfilled") {
       setHouseholdHub(householdResult.value);
     }
@@ -544,12 +549,10 @@ export function Launcher() {
       }
     }, 0);
     const initial = window.setTimeout(() => void refresh(), 0);
-    const clock = window.setInterval(() => setNow(new Date()), 15_000);
     const poll = window.setInterval(() => void refresh(), 20_000);
     return () => {
       window.clearTimeout(loadCachedShopping);
       window.clearTimeout(initial);
-      window.clearInterval(clock);
       window.clearInterval(poll);
     };
   }, [refresh]);
@@ -621,12 +624,15 @@ export function Launcher() {
     setVoiceState("idle");
     setVoiceDetail(null);
     setInputLevel(0);
+    setMode((previous) => (previous === "conversation" ? "home" : previous));
+    setLastTouch(Date.now());
   }, [muteWake]);
 
   const startVoice = useCallback(async () => {
     if (voiceSession.current) return;
     muteWake(30);
     setConversation([]);
+    setMode("conversation");
     setVoiceState("connecting");
     setVoiceDetail("Connecting to OpenClaw");
     const session = new InlineRealtimeVoice({
@@ -649,6 +655,7 @@ export function Launcher() {
       onIdleTimeout: () => {
         if (voiceSession.current === session) stopVoice();
       },
+      context: () => contextRef.current(),
     });
     voiceSession.current = session;
     try {
@@ -700,6 +707,37 @@ export function Launcher() {
   }, [muteWake, voiceActive]);
 
   useEffect(() => () => voiceSession.current?.stop(), []);
+
+  // The frame is a 1200 x 1920 stage; cover the viewport with it.
+  useEffect(() => {
+    void loadFrameConfig().then(setFrameConfig);
+    const fit = () => {
+      const scale = Math.max(
+        window.innerWidth / FRAME_WIDTH,
+        window.innerHeight / FRAME_HEIGHT,
+      );
+      const root = document.documentElement.style;
+      root.setProperty("--frame-scale", scale.toFixed(4));
+      root.setProperty(
+        "--frame-offset",
+        `${((window.innerWidth - FRAME_WIDTH * scale) / 2).toFixed(1)}px`,
+      );
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+
+  // Home stays while it is being used; untouched for a while, the frame returns.
+  useEffect(() => {
+    if (mode !== "home" || shoppingOpen || cameraOpen || voiceActive) return;
+    const timer = window.setTimeout(() => {
+      stopClip();
+      setPlayingLatest(false);
+      setMode("frame");
+    }, HOME_IDLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [mode, shoppingOpen, cameraOpen, voiceActive, lastTouch]);
 
   const closeCamera = useCallback(() => {
     setCameraOpen(false);
@@ -1254,7 +1292,35 @@ export function Launcher() {
     [hubBusy],
   );
 
-  const species = birds.window_species?.slice(0, 4) ?? [];
+  const now = new Date(frameNow);
+  const snapshot = stream.snapshot;
+  const hubWeather = householdHub?.weather ?? null;
+  useEffect(() => {
+    contextRef.current = () => gardenContext(frameNow, frameConfig, snapshot, hubWeather);
+  }, [frameNow, frameConfig, snapshot, hubWeather]);
+  const species = snapshot?.species.slice(0, 4) ?? [];
+  const latestCall = snapshot?.latest ?? null;
+  const latestAgoSeconds = latestCall
+    ? Math.max(0, Math.round((frameNow - latestCall.at) / 1000))
+    : undefined;
+  const newToday = snapshot?.newToday ?? [];
+  const todayCount = snapshot?.todaySpeciesCount ?? 0;
+  const hearLatest = () => {
+    if (playingLatest) {
+      stopClip();
+      setPlayingLatest(false);
+      return;
+    }
+    if (!latestCall?.clipUrl) return;
+    setPlayingLatest(true);
+    playClip(`/api/birdframe/clip?url=${encodeURIComponent(latestCall.clipUrl)}`, {
+      onStart: (duration) => muteWake(Math.min(60, duration + 1.5)),
+      onEnd: () => {
+        setPlayingLatest(false);
+        muteWake(1);
+      },
+    });
+  };
   const activeShoppingItems = shopping.items.filter((item) => !item.completed);
   const completedShoppingItems = shopping.items.filter((item) => item.completed);
   const activeShoppingGroups = shoppingCategoryOrder.flatMap((category) => {
@@ -1265,7 +1331,9 @@ export function Launcher() {
       ? [{ category, label: shoppingCategoryLabels[category], items }]
       : [];
   });
-  const latestName = birds.latest?.common_name || "The garden is listening";
+  const latestName =
+    latestCall?.commonName ||
+    (stream.reachable ? "The garden is quiet" : "The garden is listening");
   const gatewayReady = status.gatewayReady === true;
   const voiceReady = status.voiceReady === true;
   const birdframeReady = status.birdframeReady !== false;
@@ -1347,9 +1415,30 @@ export function Launcher() {
   return (
     <main
       className="launcher"
-      onPointerDown={beginHubSwipe}
-      onPointerUp={finishHubSwipe}
+      data-mode={mode}
+      onPointerDown={(event) => {
+        setLastTouch(Date.now());
+        beginHubSwipe(event);
+      }}
+      onPointerUp={(event) => {
+        if (mode === "frame") {
+          setMode("home");
+          return;
+        }
+        finishHubSwipe(event);
+      }}
     >
+      <Frame
+        now={frameNow}
+        config={frameConfig}
+        stream={stream}
+        weather={householdHub?.weather ?? null}
+        mode={mode}
+        muteWake={muteWake}
+        onOpenJournal={openBirdframe}
+      />
+      {mode === "frame" ? null : (
+      <>
       <nav className="launcher__page-nav" aria-label="Launcher pages">
         <button
           type="button"
@@ -1368,8 +1457,8 @@ export function Launcher() {
         <div className="launcher__frame">
         <header className="launcher__masthead">
           <div>
-            <p className="launcher__eyebrow">Touchscreen · home</p>
-            <h1 className="launcher__place">A quiet intelligence</h1>
+            <p className="launcher__eyebrow">{frameConfig.place} · home</p>
+            <h1 className="launcher__place">{greetingFor(frameNow)}</h1>
           </div>
           <div className="launcher__clock" aria-label={now.toLocaleString()}>
             <time className="launcher__time">{formatClock(now)}</time>
@@ -1444,35 +1533,52 @@ export function Launcher() {
         </section>
 
         <section className="launcher__lower" aria-label="Home applications">
-          <button
-            type="button"
-            className="bird-card"
-            onClick={openBirdframe}
-            disabled={!birdframeReady}
-          >
-            <span className="bird-card__open">Open journal →</span>
-            <p className="bird-card__eyebrow">Live from BirdFrame</p>
-            <h2 className="bird-card__title">{latestName}</h2>
-            <p className="bird-card__meta">
-              {timeAgo(birds.latest?.seconds_ago)}
-              {birds.today_species_count
-                ? ` · ${birds.today_species_count} voices today`
-                : ""}
-            </p>
-            <div className="bird-card__voices">
-              {species.length > 0 ? (
-                species.map((entry) => (
-                  <span className="bird-card__voice" key={entry.common_name}>
-                    {entry.common_name} · {entry.count}
+          <div className="bird-card__wrap">
+            <button
+              type="button"
+              className="bird-card"
+              onClick={openBirdframe}
+              disabled={!birdframeReady}
+            >
+              <span className="bird-card__open">Open journal →</span>
+              <p className="bird-card__eyebrow">
+                {newToday.length
+                  ? `New to this garden · ${newToday.join(", ")}`
+                  : stream.reachable
+                    ? "Live from BirdFrame"
+                    : "BirdFrame unreachable"}
+              </p>
+              <h2 className="bird-card__title">{latestName}</h2>
+              <p className="bird-card__meta">
+                {timeAgo(latestAgoSeconds)}
+                {latestCall?.tier ? ` · ${tierWord(latestCall.tier)}` : ""}
+                {todayCount ? ` · ${todayCount} voices today` : ""}
+              </p>
+              <div className="bird-card__voices">
+                {species.length > 0 ? (
+                  species.map((entry) => (
+                    <span className="bird-card__voice" key={entry.commonName}>
+                      {entry.commonName} · {entry.count}
+                    </span>
+                  ))
+                ) : (
+                  <span className="bird-card__voice">
+                    Listening across the last {snapshot?.windowMinutes || 60} minutes
                   </span>
-                ))
-              ) : (
-                <span className="bird-card__voice">
-                  Listening across the last {birds.window_minutes || 60} minutes
-                </span>
-              )}
-            </div>
-          </button>
+                )}
+              </div>
+            </button>
+            {latestCall?.clipUrl ? (
+              <button
+                type="button"
+                className="bird-card__hear"
+                onClick={hearLatest}
+                aria-pressed={playingLatest}
+              >
+                {playingLatest ? "Stop" : "Hear it"}
+              </button>
+            ) : null}
+          </div>
 
           <div className="launcher__side">
             <section
@@ -1646,11 +1752,13 @@ export function Launcher() {
             >
               <span>Garden right now</span>
               <strong>{latestName}</strong>
-              <small>{timeAgo(birds.latest?.seconds_ago)}</small>
+              <small>{timeAgo(latestAgoSeconds)}</small>
               <i aria-hidden="true">Open BirdFrame →</i>
             </button>
           </div>
         </section>
+      )}
+      </>
       )}
 
       {shoppingOpen ? (

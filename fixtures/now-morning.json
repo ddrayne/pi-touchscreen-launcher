@@ -1,0 +1,48 @@
+{
+  "now": "07:42:10",
+  "cursor": 48213,
+  "window_minutes": 60,
+  "latest": {
+    "id": 48213,
+    "common_name": "Eurasian Blackbird",
+    "scientific_name": "Turdus merula",
+    "confidence": 0.91,
+    "rms_dbfs": -31.2,
+    "peak_dbfs": -14.8,
+    "noise_floor_dbfs": -52.1,
+    "snr_db": 20.9,
+    "at": "07:41:52",
+    "seconds_ago": 18,
+    "tier": "confirmed",
+    "clip_url": "/api/clip/2026-10-06/Eurasian%20Blackbird"
+  },
+  "feed": [
+    {"id": 48213, "timestamp": "2026-10-06T07:41:52", "common_name": "Eurasian Blackbird", "scientific_name": "Turdus merula", "confidence": 0.91, "rms_dbfs": -31.2, "peak_dbfs": -14.8, "noise_floor_dbfs": -52.1, "snr_db": 20.9, "at": "07:41:52"},
+    {"id": 48212, "timestamp": "2026-10-06T07:40:31", "common_name": "European Robin", "scientific_name": "Erithacus rubecula", "confidence": 0.84, "rms_dbfs": -36.0, "peak_dbfs": -20.1, "noise_floor_dbfs": -52.4, "snr_db": 16.4, "at": "07:40:31"},
+    {"id": 48211, "timestamp": "2026-10-06T07:39:02", "common_name": "Eurasian Blue Tit", "scientific_name": "Cyanistes caeruleus", "confidence": 0.77, "rms_dbfs": -38.4, "peak_dbfs": -22.0, "noise_floor_dbfs": -52.0, "snr_db": 13.6, "at": "07:39:02"},
+    {"id": 48210, "timestamp": "2026-10-06T07:36:45", "common_name": "Eurasian Blackbird", "scientific_name": "Turdus merula", "confidence": 0.88, "rms_dbfs": -33.0, "peak_dbfs": -16.0, "noise_floor_dbfs": -52.3, "snr_db": 19.3, "at": "07:36:45"},
+    {"id": 48209, "timestamp": "2026-10-06T07:33:12", "common_name": "Eurasian Wren", "scientific_name": "Troglodytes troglodytes", "confidence": 0.81, "rms_dbfs": -35.2, "peak_dbfs": -18.9, "noise_floor_dbfs": -52.2, "snr_db": 17.0, "at": "07:33:12"},
+    {"id": 48208, "timestamp": "2026-10-06T07:28:40", "common_name": "Common Wood-Pigeon", "scientific_name": "Columba palumbus", "confidence": 0.93, "rms_dbfs": -30.1, "peak_dbfs": -13.2, "noise_floor_dbfs": -52.5, "snr_db": 22.4, "at": "07:28:40"},
+    {"id": 48207, "timestamp": "2026-10-06T07:25:03", "common_name": "Herring Gull", "scientific_name": "Larus argentatus", "confidence": 0.72, "rms_dbfs": -34.8, "peak_dbfs": -19.0, "noise_floor_dbfs": -52.0, "snr_db": 17.2, "at": "07:25:03"},
+    {"id": 48206, "timestamp": "2026-10-06T07:19:58", "common_name": "Eurasian Blackbird", "scientific_name": "Turdus merula", "confidence": 0.86, "rms_dbfs": -32.9, "peak_dbfs": -15.5, "noise_floor_dbfs": -52.1, "snr_db": 19.2, "at": "07:19:58"},
+    {"id": 48205, "timestamp": "2026-10-06T07:14:21", "common_name": "Eurasian Magpie", "scientific_name": "Pica pica", "confidence": 0.69, "rms_dbfs": -36.6, "peak_dbfs": -21.4, "noise_floor_dbfs": -52.2, "snr_db": 15.6, "at": "07:14:21"},
+    {"id": 48204, "timestamp": "2026-10-06T07:08:47", "common_name": "Dunnock", "scientific_name": "Prunella modularis", "confidence": 0.58, "rms_dbfs": -40.1, "peak_dbfs": -25.0, "noise_floor_dbfs": -52.3, "snr_db": 12.2, "at": "07:08:47"},
+    {"id": 48203, "timestamp": "2026-10-06T06:58:30", "common_name": "Eurasian Blackbird", "scientific_name": "Turdus merula", "confidence": 0.9, "rms_dbfs": -31.0, "peak_dbfs": -14.2, "noise_floor_dbfs": -52.0, "snr_db": 21.0, "at": "06:58:30"},
+    {"id": 48202, "timestamp": "2026-10-06T06:52:09", "common_name": "Great Tit", "scientific_name": "Parus major", "confidence": 0.8, "rms_dbfs": -37.0, "peak_dbfs": -21.1, "noise_floor_dbfs": -52.2, "snr_db": 15.2, "at": "06:52:09"},
+    {"id": 48201, "timestamp": "2026-10-06T06:45:55", "common_name": "Eurasian Blackbird", "scientific_name": "Turdus merula", "confidence": 0.87, "rms_dbfs": -32.0, "peak_dbfs": -15.0, "noise_floor_dbfs": -52.1, "snr_db": 20.1, "at": "06:45:55"}
+  ],
+  "window_species": [
+    {"common_name": "Eurasian Blackbird", "scientific_name": "Turdus merula", "count": 5, "tier": "confirmed"},
+    {"common_name": "Common Wood-Pigeon", "scientific_name": "Columba palumbus", "count": 1, "tier": "confirmed"},
+    {"common_name": "European Robin", "scientific_name": "Erithacus rubecula", "count": 1, "tier": "confirmed"},
+    {"common_name": "Eurasian Wren", "scientific_name": "Troglodytes troglodytes", "count": 1, "tier": "probable"},
+    {"common_name": "Eurasian Blue Tit", "scientific_name": "Cyanistes caeruleus", "count": 1, "tier": "probable"},
+    {"common_name": "Great Tit", "scientific_name": "Parus major", "count": 1, "tier": "probable"},
+    {"common_name": "Herring Gull", "scientific_name": "Larus argentatus", "count": 1, "tier": "probable"},
+    {"common_name": "Eurasian Magpie", "scientific_name": "Pica pica", "count": 1, "tier": "tentative"},
+    {"common_name": "Dunnock", "scientific_name": "Prunella modularis", "count": 1, "tier": "tentative"}
+  ],
+  "activity": [0, 0, 1, 0, 1, 1, 0, 2, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1],
+  "today_species_count": 9,
+  "new_today": []
+}

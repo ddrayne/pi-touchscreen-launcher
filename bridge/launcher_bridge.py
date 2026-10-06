@@ -4,21 +4,32 @@
 The browser never receives a Gateway bearer token. This process serves the
 static launcher, proxies the read-only BirdFrame snapshot, reports appliance
 health, and switches the two fullscreen windows through wlrctl.
+
+For the frame it also keeps one long poll open to BirdFrame and republishes
+arrivals as server-sent events, caches Wikimedia portraits and the day's
+painting on the Pi so a cold boot or a LAN outage never shows an empty
+frame, proxies recordings to the speaker, and sets the panel backlight.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
+import html
 import json
 import mimetypes
 import os
+import queue
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from datetime import date
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -51,6 +62,26 @@ WINDOW_MATCHES = {
         "BIRDFRAME_WINDOW_MATCH", "app_id:com.example.birdframe_display"
     ),
 }
+LAUNCHER_LATITUDE = float(os.environ.get("LAUNCHER_LATITUDE", "55.95"))
+LAUNCHER_LONGITUDE = float(os.environ.get("LAUNCHER_LONGITUDE", "-3.19"))
+LAUNCHER_FACING = float(os.environ.get("LAUNCHER_FACING", "180"))
+LAUNCHER_PLACE = os.environ.get("LAUNCHER_PLACE", "Edinburgh").strip() or "Edinburgh"
+CACHE_ROOT = Path(
+    os.environ.get(
+        "LAUNCHER_CACHE_ROOT",
+        str(Path.home() / ".cache" / "touchscreen-launcher"),
+    )
+)
+PORTRAIT_CACHE = CACHE_ROOT / "portraits"
+MEDIA_CACHE = CACHE_ROOT / "media"
+SNAPSHOT_CACHE = CACHE_ROOT / "last-now.json"
+BACKLIGHT_ROOT = Path(os.environ.get("LAUNCHER_BACKLIGHT_ROOT", "/sys/class/backlight"))
+WIKIMEDIA_USER_AGENT = (
+    "PiTouchscreenLauncher/1 (https://github.com/ddrayne/pi-touchscreen-launcher)"
+)
+PORTRAIT_RETRY_SECONDS = 24 * 60 * 60
+SNAPSHOT_INTERVAL = 30.0
+LONG_POLL_SECONDS = 15
 CAMERA_LOCK = threading.Lock()
 CAMERA_CACHE: tuple[float, bytes] = (0.0, b"")
 WAKE_LOCK = threading.Lock()
@@ -291,6 +322,389 @@ def mute_wake(seconds: float) -> dict[str, Any]:
         }
 
 
+def safe_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip()).strip("._")
+    return cleaned[:120] or "unknown"
+
+
+def strip_tags(value: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", value)).strip()
+
+
+def fetch_bytes(url: str, timeout: float = 20.0, user_agent: str = "PiTouchscreenLauncher/1") -> tuple[bytes, str]:
+    request = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        content_type = response.headers.get("Content-Type", "application/octet-stream")
+        return response.read(), content_type.split(";")[0].strip()
+
+
+class BirdframeWatcher:
+    """One long poll to BirdFrame, republished to every open event stream."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.clients: set[queue.Queue[tuple[str, dict[str, Any]]]] = set()
+        self.snapshot: dict[str, Any] | None = None
+        self.today: dict[str, Any] | None = None
+        self.reachable = False
+        self.cursor = 0
+        self.thread: threading.Thread | None = None
+        self._load_cached_snapshot()
+
+    def _load_cached_snapshot(self) -> None:
+        try:
+            cached = json.loads(SNAPSHOT_CACHE.read_text("utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(cached, dict) and isinstance(cached.get("now"), dict):
+            self.snapshot = cached["now"]
+            self.today = cached.get("today") if isinstance(cached.get("today"), dict) else None
+
+    def start(self) -> None:
+        if self.thread is not None:
+            return
+        self.thread = threading.Thread(target=self._run, name="birdframe-watcher", daemon=True)
+        self.thread.start()
+
+    def subscribe(self) -> queue.Queue[tuple[str, dict[str, Any]]]:
+        client: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=200)
+        with self.lock:
+            self.clients.add(client)
+        self.start()
+        return client
+
+    def unsubscribe(self, client: queue.Queue[tuple[str, dict[str, Any]]]) -> None:
+        with self.lock:
+            self.clients.discard(client)
+
+    def broadcast(self, event: str, payload: dict[str, Any]) -> None:
+        with self.lock:
+            clients = list(self.clients)
+        for client in clients:
+            try:
+                client.put_nowait((event, payload))
+            except queue.Full:
+                self.unsubscribe(client)
+
+    def snapshot_event(self) -> dict[str, Any]:
+        return {"now": self.snapshot, "today": self.today, "reachable": self.reachable}
+
+    def _refresh_snapshot(self) -> None:
+        now = fetch_json(f"{BIRDFRAME_URL}/api/now", timeout=8.0)
+        try:
+            today = fetch_json(f"{BIRDFRAME_URL}/api/today", timeout=8.0)
+        except (OSError, ValueError, urllib.error.URLError):
+            today = self.today
+        if not isinstance(now, dict):
+            raise ValueError("BirdFrame returned an unexpected snapshot")
+        self.snapshot = now
+        self.today = today if isinstance(today, dict) else None
+        self.reachable = True
+        cursor = now.get("cursor")
+        if isinstance(cursor, int) and cursor > self.cursor:
+            self.cursor = cursor
+        try:
+            CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+            SNAPSHOT_CACHE.write_text(
+                json.dumps({"now": now, "today": self.today, "saved_at": time.time()}),
+                "utf-8",
+            )
+        except OSError:
+            pass
+        self.broadcast("snapshot", self.snapshot_event())
+
+    def _long_poll(self) -> None:
+        rows = fetch_json(
+            f"{BIRDFRAME_URL}/api/detections?after_id={self.cursor}&wait={LONG_POLL_SECONDS}&limit=20",
+            timeout=LONG_POLL_SECONDS + 10,
+        )
+        self.reachable = True
+        detections = rows.get("detections") if isinstance(rows, dict) else rows
+        if isinstance(rows, dict) and not isinstance(detections, list):
+            detections = rows.get("rows") or rows.get("items") or []
+        for row in sorted(
+            (entry for entry in (detections or []) if isinstance(entry, dict)),
+            key=lambda entry: entry.get("id", 0),
+        ):
+            row_id = row.get("id")
+            if isinstance(row_id, int) and row_id > self.cursor:
+                self.cursor = row_id
+            self.broadcast("detection", row)
+        next_cursor = rows.get("next_cursor") if isinstance(rows, dict) else None
+        if isinstance(next_cursor, int) and next_cursor > self.cursor:
+            self.cursor = next_cursor
+        self.broadcast("heartbeat", {"reachable": True})
+
+    def _run(self) -> None:
+        last_snapshot = 0.0
+        while True:
+            try:
+                if time.monotonic() - last_snapshot >= SNAPSHOT_INTERVAL:
+                    self._refresh_snapshot()
+                    last_snapshot = time.monotonic()
+                self._long_poll()
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                if self.reachable:
+                    print(f"BirdFrame watcher lost contact: {error}", flush=True)
+                self.reachable = False
+                self.broadcast("heartbeat", {"reachable": False})
+                time.sleep(5)
+
+
+WATCHER = BirdframeWatcher()
+
+
+class PortraitCache:
+    """Wikimedia portraits with their credits, kept on the Pi."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.lock = threading.Lock()
+        self.warming = False
+
+    def _paths(self, scientific_name: str) -> tuple[Path, str]:
+        key = safe_name(scientific_name)
+        return self.root / f"{key}.json", key
+
+    def lookup(self, scientific_name: str) -> dict[str, Any] | None:
+        meta_path, key = self._paths(scientific_name)
+        try:
+            meta = json.loads(meta_path.read_text("utf-8"))
+        except (OSError, ValueError):
+            meta = None
+        if isinstance(meta, dict):
+            if meta.get("missing"):
+                if time.time() - float(meta.get("checked_at", 0)) < PORTRAIT_RETRY_SECONDS:
+                    return None
+            elif (self.root / str(meta.get("file", ""))).is_file():
+                return meta
+        with self.lock:
+            return self._fetch(scientific_name, meta_path, key)
+
+    def _fetch(self, scientific_name: str, meta_path: Path, key: str) -> dict[str, Any] | None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        try:
+            page = self._wikipedia_page(scientific_name)
+            info = self._commons_info(page["file"]) if page else None
+            if not page or not info:
+                raise LookupError("no free portrait")
+            image, content_type = fetch_bytes(info["url"], timeout=30.0, user_agent=WIKIMEDIA_USER_AGENT)
+            extension = {"image/png": ".png", "image/gif": ".gif", "image/webp": ".webp"}.get(content_type, ".jpg")
+            file_name = f"{key}{extension}"
+            (self.root / file_name).write_bytes(image)
+            meta = {
+                "file": file_name,
+                "contentType": content_type,
+                "title": page["title"],
+                "artist": info["artist"],
+                "license": info["license"],
+                "source": info["source"],
+                "checked_at": time.time(),
+            }
+            meta_path.write_text(json.dumps(meta), "utf-8")
+            return meta
+        except (OSError, ValueError, LookupError, KeyError, urllib.error.URLError) as error:
+            try:
+                meta_path.write_text(json.dumps({"missing": True, "checked_at": time.time(), "reason": str(error)}), "utf-8")
+            except OSError:
+                pass
+            return None
+
+    def _wikipedia_page(self, scientific_name: str) -> dict[str, str] | None:
+        params = urllib.parse.urlencode(
+            {
+                "action": "query",
+                "prop": "pageimages|info",
+                "titles": scientific_name,
+                "pithumbsize": "1000",
+                "piprop": "name|thumbnail",
+                "pilicense": "free",
+                "inprop": "url",
+                "redirects": "1",
+                "format": "json",
+                "formatversion": "2",
+            }
+        )
+        data, _ = fetch_bytes(f"https://en.wikipedia.org/w/api.php?{params}", user_agent=WIKIMEDIA_USER_AGENT)
+        pages = json.loads(data).get("query", {}).get("pages", [])
+        if not pages:
+            return None
+        page = pages[0]
+        file_name = page.get("pageimage")
+        if not file_name:
+            return None
+        return {"file": str(file_name), "title": str(page.get("title") or scientific_name)}
+
+    def _commons_info(self, file_name: str) -> dict[str, str] | None:
+        params = urllib.parse.urlencode(
+            {
+                "action": "query",
+                "prop": "imageinfo",
+                "titles": f"File:{file_name}",
+                "iiprop": "url|extmetadata",
+                "iiurlwidth": "1000",
+                "iiextmetadatafilter": "Artist|Credit|Attribution|LicenseShortName|LicenseUrl|UsageTerms",
+                "format": "json",
+                "formatversion": "2",
+            }
+        )
+        data, _ = fetch_bytes(f"https://commons.wikimedia.org/w/api.php?{params}", user_agent=WIKIMEDIA_USER_AGENT)
+        pages = json.loads(data).get("query", {}).get("pages", [])
+        if not pages or not pages[0].get("imageinfo"):
+            return None
+        info = pages[0]["imageinfo"][0]
+        metadata = info.get("extmetadata", {})
+
+        def field(name: str) -> str:
+            value = metadata.get(name, {}).get("value")
+            return strip_tags(str(value)) if value else ""
+
+        url = info.get("thumburl") or info.get("url")
+        if not url:
+            return None
+        return {
+            "url": str(url),
+            "artist": field("Attribution") or field("Artist") or "Wikimedia contributor",
+            "license": field("LicenseShortName") or field("UsageTerms") or "See source for licence",
+            "source": str(info.get("descriptionurl") or ""),
+        }
+
+    def warm(self, scientific_names: list[str]) -> None:
+        if self.warming:
+            return
+        self.warming = True
+
+        def run() -> None:
+            try:
+                for name in scientific_names:
+                    meta_path, _ = self._paths(name)
+                    if meta_path.exists():
+                        continue
+                    self.lookup(name)
+                    time.sleep(1.5)
+            finally:
+                self.warming = False
+
+        threading.Thread(target=run, name="portrait-warm", daemon=True).start()
+
+
+PORTRAITS = PortraitCache(PORTRAIT_CACHE)
+
+
+def warm_portraits_from_census() -> None:
+    try:
+        census = fetch_json(f"{BIRDFRAME_URL}/api/census", timeout=10.0)
+    except (OSError, ValueError, urllib.error.URLError):
+        return
+    entries = census.get("life_list") if isinstance(census, dict) else census
+    if isinstance(census, dict) and not isinstance(entries, list):
+        entries = census.get("species") or census.get("rows") or []
+    names = [
+        str(entry.get("scientific_name"))
+        for entry in (entries or [])
+        if isinstance(entry, dict) and entry.get("scientific_name")
+    ]
+    if names:
+        PORTRAITS.warm(names)
+
+
+def cached_media(path: str, timeout: float = 20.0) -> tuple[bytes, str]:
+    """A BirdFrame byte resource, cached by path on the Pi."""
+    MEDIA_CACHE.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(path.encode("utf-8")).hexdigest()[:40]
+    data_path = MEDIA_CACHE / key
+    type_path = MEDIA_CACHE / f"{key}.type"
+    if data_path.is_file() and type_path.is_file():
+        return data_path.read_bytes(), type_path.read_text("utf-8").strip()
+    data, content_type = fetch_bytes(f"{BIRDFRAME_URL}{path}", timeout=timeout)
+    try:
+        data_path.write_bytes(data)
+        type_path.write_text(content_type, "utf-8")
+    except OSError:
+        pass
+    return data, content_type
+
+
+NARRATION_CACHE: tuple[float, str, str] = (0.0, "", "")
+
+
+def day_record() -> dict[str, Any]:
+    global NARRATION_CACHE
+    today = date.today().isoformat()
+    try:
+        detail = fetch_json(f"{BIRDFRAME_URL}/api/day/{today}", timeout=10.0)
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+        detail = {}
+    if not isinstance(detail, dict):
+        detail = {}
+    cached_at, cached_day, narration = NARRATION_CACHE
+    if cached_day != today or time.monotonic() - cached_at > 600:
+        try:
+            result = fetch_json(f"{BIRDFRAME_URL}/api/narration", timeout=20.0)
+            narration = str(result.get("narration") or "") if isinstance(result, dict) else ""
+        except (OSError, ValueError, urllib.error.URLError):
+            narration = narration if cached_day == today else ""
+        NARRATION_CACHE = (time.monotonic(), today, narration)
+    images = [
+        {"id": image.get("id"), "url": f"/api/birdframe/artwork/{image.get('id')}?w=1200"}
+        for image in (detail.get("images") or [])
+        if isinstance(image, dict) and isinstance(image.get("id"), int)
+    ]
+    clips = [
+        {
+            "common_name": clip.get("common_name"),
+            "url": f"/api/birdframe/clip/{today}/{urllib.parse.quote(str(clip.get('common_name')))}",
+        }
+        for clip in (detail.get("clips") or [])
+        if isinstance(clip, dict) and clip.get("common_name")
+    ]
+    return {
+        "date": today,
+        "species": detail.get("species") or [],
+        "new_species": detail.get("new_species") or [],
+        "clips": clips,
+        "images": images,
+        "narration": narration,
+    }
+
+
+def backlight_files() -> tuple[Path, Path] | None:
+    if not BACKLIGHT_ROOT.is_dir():
+        return None
+    for candidate in sorted(BACKLIGHT_ROOT.iterdir()):
+        brightness = candidate / "brightness"
+        maximum = candidate / "max_brightness"
+        if brightness.is_file() and maximum.is_file():
+            return brightness, maximum
+    return None
+
+
+def read_backlight() -> dict[str, Any]:
+    files = backlight_files()
+    if files is None:
+        return {"available": False, "brightness": None}
+    brightness, maximum = files
+    try:
+        current = int(brightness.read_text("utf-8").strip())
+        top = int(maximum.read_text("utf-8").strip())
+    except (OSError, ValueError):
+        return {"available": False, "brightness": None}
+    return {"available": True, "brightness": current / top if top else None, "raw": current, "max": top}
+
+
+def write_backlight(fraction: float) -> dict[str, Any]:
+    files = backlight_files()
+    if files is None:
+        return {"available": False, "brightness": None, "error": "No backlight under " + str(BACKLIGHT_ROOT)}
+    brightness, maximum = files
+    top = int(maximum.read_text("utf-8").strip())
+    level = max(1, min(top, round(top * max(0.0, min(1.0, fraction)))))
+    brightness.write_text(f"{level}\n", "utf-8")
+    return {"available": True, "brightness": level / top, "raw": level, "max": top}
+
+
 class LauncherHandler(SimpleHTTPRequestHandler):
     server_version = "PiTouchscreenLauncher/1"
     protocol_version = "HTTP/1.1"
@@ -440,6 +854,121 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                 )
             self.close_connection = True
 
+    def stream_birdframe_events(self) -> None:
+        client = WATCHER.subscribe()
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            self.wfile.write(b": hello\n\n")
+            self.wfile.write(
+                f"event: snapshot\ndata: {json.dumps(WATCHER.snapshot_event())}\n\n".encode("utf-8")
+            )
+            self.wfile.flush()
+            while True:
+                try:
+                    event, payload = client.get(timeout=15.0)
+                except queue.Empty:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    continue
+                self.wfile.write(
+                    f"event: {event}\ndata: {json.dumps(payload)}\n\n".encode("utf-8")
+                )
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            WATCHER.unsubscribe(client)
+
+    def serve_portrait(self) -> None:
+        rest = self.path[len("/api/birdframe/portrait/"):].split("?", 1)[0]
+        parts = [urllib.parse.unquote(part) for part in rest.split("/") if part]
+        if not parts:
+            self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        scientific_name = parts[0].strip()
+        meta = PORTRAITS.lookup(scientific_name)
+        if meta is None:
+            self.send_json({"error": "No free portrait is known for this species"}, HTTPStatus.NOT_FOUND)
+            return
+        if len(parts) > 1 and parts[1] == "image":
+            file_path = PORTRAIT_CACHE / str(meta["file"])
+            try:
+                image = file_path.read_bytes()
+            except OSError:
+                self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", str(meta.get("contentType") or "image/jpeg"))
+            self.send_header("Content-Length", str(len(image)))
+            self.send_header("Cache-Control", "max-age=2592000, immutable")
+            self.end_headers()
+            self.wfile.write(image)
+            return
+        self.send_json(
+            {
+                "image": f"/api/birdframe/portrait/{urllib.parse.quote(scientific_name)}/image",
+                "title": meta.get("title"),
+                "artist": meta.get("artist"),
+                "license": meta.get("license"),
+                "source": meta.get("source"),
+            }
+        )
+
+    def serve_artwork(self) -> None:
+        path, _, query = self.path.partition("?")
+        image_id = path[len("/api/birdframe/artwork/"):]
+        if not image_id.isdigit():
+            self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        width = urllib.parse.parse_qs(query).get("w", ["1200"])[0]
+        suffix = f"?w={width}" if width.isdigit() else ""
+        try:
+            data, content_type = cached_media(f"/api/image/{image_id}{suffix}", timeout=30.0)
+        except (OSError, urllib.error.URLError) as error:
+            self.send_json(
+                {"error": "The painting is unavailable", "detail": str(error)},
+                HTTPStatus.BAD_GATEWAY,
+            )
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def serve_clip(self) -> None:
+        path, _, query = self.path.partition("?")
+        upstream = ""
+        if path.startswith("/api/birdframe/clip/"):
+            upstream = "/api/clip/" + path[len("/api/birdframe/clip/"):]
+        else:
+            upstream = urllib.parse.parse_qs(query).get("url", [""])[0]
+        if not upstream.startswith("/api/clip/") or ".." in upstream:
+            self.send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+            return
+        try:
+            data, content_type = fetch_bytes(f"{BIRDFRAME_URL}{upstream}", timeout=15.0)
+        except urllib.error.HTTPError as error:
+            self.send_json({"error": "No recording"}, HTTPStatus.NOT_FOUND if error.code == 404 else HTTPStatus.BAD_GATEWAY)
+            return
+        except (OSError, urllib.error.URLError) as error:
+            self.send_json(
+                {"error": "The recording is unavailable", "detail": str(error)},
+                HTTPStatus.BAD_GATEWAY,
+            )
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type or "audio/ogg")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def analyze_camera_for_shopping(self) -> None:
         payload = self.read_json_payload(1024)
         if payload is None:
@@ -487,8 +1016,60 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                         f"{VOICE_BROKER_URL}/shopping"
                     ),
                     "openClawUrl": OPENCLAW_URL,
+                    "frame": True,
                 }
             )
+            return
+
+        if self.path == "/api/config":
+            self.send_json(
+                {
+                    "latitude": LAUNCHER_LATITUDE,
+                    "longitude": LAUNCHER_LONGITUDE,
+                    "facing": LAUNCHER_FACING,
+                    "place": LAUNCHER_PLACE,
+                }
+            )
+            return
+
+        if self.path.startswith("/api/birdframe/events"):
+            self.stream_birdframe_events()
+            return
+
+        if self.path.startswith("/api/birdframe/today"):
+            try:
+                self.send_json(fetch_json(f"{BIRDFRAME_URL}/api/today", timeout=8.0))
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                self.send_json(
+                    {"error": "BirdFrame is unavailable", "detail": str(error)},
+                    HTTPStatus.BAD_GATEWAY,
+                )
+            return
+
+        if self.path.startswith("/api/birdframe/day"):
+            try:
+                self.send_json(day_record())
+            except (OSError, ValueError, urllib.error.URLError) as error:
+                self.send_json(
+                    {"error": "BirdFrame is unavailable", "detail": str(error)},
+                    HTTPStatus.BAD_GATEWAY,
+                )
+            return
+
+        if self.path.startswith("/api/birdframe/portrait/"):
+            self.serve_portrait()
+            return
+
+        if self.path.startswith("/api/birdframe/artwork/"):
+            self.serve_artwork()
+            return
+
+        if self.path.startswith("/api/birdframe/clip"):
+            self.serve_clip()
+            return
+
+        if self.path == "/api/display":
+            self.send_json(read_backlight())
             return
 
         if self.path == "/api/household":
@@ -561,7 +1142,7 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                 )
             return
 
-        if self.path == "/api/birdframe":
+        if self.path.startswith("/api/birdframe"):
             try:
                 self.send_json(fetch_json(f"{BIRDFRAME_URL}/api/now"))
             except (OSError, ValueError, urllib.error.URLError) as error:
@@ -598,6 +1179,26 @@ class LauncherHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/api/shopping/camera/analyze":
             self.analyze_camera_for_shopping()
+            return
+
+        if self.path == "/api/display":
+            payload = self.read_json_payload(256)
+            if payload is None:
+                return
+            brightness = payload.get("brightness")
+            if not isinstance(brightness, (int, float)):
+                self.send_json(
+                    {"error": "brightness must be a number between 0 and 1"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+            try:
+                self.send_json(write_backlight(float(brightness)))
+            except (OSError, ValueError) as error:
+                self.send_json(
+                    {"error": "The backlight could not be set", "detail": str(error)},
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                )
             return
 
         if self.path == "/api/household/control":
@@ -731,11 +1332,14 @@ def main() -> None:
     if not STATIC_ROOT.is_dir():
         raise SystemExit(f"Launcher static root does not exist: {STATIC_ROOT}")
     server = ThreadingHTTPServer((HOST, PORT), LauncherHandler)
+    server.daemon_threads = True
     print(
         f"Touchscreen launcher bridge on http://{HOST}:{PORT} "
-        f"(static root {STATIC_ROOT})",
+        f"(static root {STATIC_ROOT}, cache {CACHE_ROOT})",
         flush=True,
     )
+    WATCHER.start()
+    threading.Thread(target=warm_portraits_from_census, name="census-warm", daemon=True).start()
     server.serve_forever()
 
 

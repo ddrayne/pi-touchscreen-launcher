@@ -19,6 +19,12 @@ export type InlineVoiceCallbacks = {
   onTranscript: (entry: InlineVoiceTranscript) => void;
   onToolResult?: (name: string, result: unknown) => void;
   onIdleTimeout?: () => void;
+  /**
+   * What the screen knows right now (the garden, the weather), sent once as
+   * a system message when the conversation opens so "what was that bird?"
+   * can be answered without a round trip to the agent.
+   */
+  context?: () => string | null;
 };
 
 type WebRtcSession = {
@@ -232,6 +238,17 @@ export class InlineRealtimeVoice {
     channel.addEventListener("message", (event) => this.handleEvent(event.data));
     channel.addEventListener("open", () => {
       if (this.closed) return;
+      const context = this.callbacks.context?.();
+      if (context && context.trim()) {
+        this.send({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "system",
+            content: [{ type: "input_text", text: context.trim() }],
+          },
+        });
+      }
       this.callbacks.onStatus("listening", "I’m listening");
       this.scheduleIdleTimeout(INITIAL_IDLE_TIMEOUT_MS);
       this.sessionTimer = window.setTimeout(

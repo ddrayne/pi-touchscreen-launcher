@@ -30,12 +30,14 @@ test("server-renders the touchscreen launcher", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Touchscreen Assistant<\/title>/i);
-  assert.match(html, /A quiet intelligence/);
-  assert.match(html, /What would you like to know\?/);
-  assert.match(html, /Live from BirdFrame/);
-  assert.match(html, /House shopping/);
-  assert.match(html, /\+ Add item/);
-  assert.match(html, />Look</);
+  // The frame is the resting state: the painting renders first, Home waits
+  // for a touch.
+  // React separates adjacent text expressions with comment markers.
+  assert.match(html, /The (?:<!-- -->)?Edinburgh(?:<!-- -->)? window/);
+  assert.match(html, /An impression of the last hour/);
+  assert.match(html, /The journal is one tap away/);
+  assert.match(html, /frame-garden/);
+  assert.doesNotMatch(html, /A quiet intelligence/);
   assert.doesNotMatch(html, /HA_TOKEN|Bearer\s+[A-Za-z0-9._-]+/);
 });
 

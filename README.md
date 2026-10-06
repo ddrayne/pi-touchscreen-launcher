@@ -1,7 +1,11 @@
 # Pi Touchscreen Assistant
 
-A portrait kiosk launcher for `pi-touchscreen.local`. It combines:
+A portrait kiosk for `pi-touchscreen.local`. At rest it is a living painting
+of the garden BirdFrame is listening to; a touch brings the home screen
+forward; the wake word opens a conversation. It combines:
 
+- the frame: a full-bleed, animated impression of the garden right now, made
+  only from what BirdFrame heard and the sun's real position;
 - a touch-first home screen with live BirdFrame data;
 - OpenClaw Talk using OpenAI Realtime over WebRTC;
 - the canonical Home Assistant shopping list with touch and OpenClaw access;
@@ -13,6 +17,60 @@ The installed Pi is intentionally a thin appliance. OpenClaw and provider
 credentials remain on the Mac at `192.168.86.24`. The landing page receives
 only a short-lived provider session for each conversation.
 
+## The frame
+
+The panel has three states:
+
+| State | When | What is on the glass |
+| --- | --- | --- |
+| Frame | at rest, which is almost always | the painting, a small clock, the honesty line |
+| Home | the glass is touched | the painting recedes behind the clock, shopping, household and a small voice pill; 90 s untouched and the frame returns |
+| Conversation | the wake word, or the pill | the transcript over the dimmed painting |
+
+The painting may dramatise but may not fabricate. Every mark traces to a
+BirdFrame field or a line of solar arithmetic:
+
+- The sky is a continuous palette keyed to the sun's real elevation. The sun
+  travels its real arc for the real day; the moon shows its true lit limb; the
+  star field is the same every night and fades through twilight.
+- Weather comes from the Home Assistant entity the household hub already reads
+  (`cloud_coverage`, `wind_speed`, `wind_bearing` where the integration
+  provides them). Cloud cover sets how many shapes drift and how dense, wind
+  sets their drift and the sway of the trees, rain draws ink hatching, frost
+  pales the lawn. No weather means a clear, still sky.
+- The garden line is drawn from photographs of the real view: the lawn, the
+  bird bath, the rotary dryer, the clipped hedge, the fence, two trees and the
+  tenement beyond with its chimney pots. Its windows glow at night. Canopy
+  density follows the day of the year.
+- Every species in the last hour is a body of its archetype (tit, thrush,
+  gull, swift and so on, `lib/frame/archetypes.ts`), perched where its kind
+  perches or crossing its band of sky. Bodies per species are
+  `1 + log2(calls)`, capped at 24; they are not counts. Recency is ink: full
+  at the last call, fading across the window. A sparrowhawk overhead freezes
+  everything else.
+- A call lands within a second of being heard. The bird flies in, its name
+  sets in display serif, and its Wikimedia portrait blooms in the sky for
+  twenty seconds before sliding into the gallery strip of today's cast. The
+  first call of the day holds a minute; a species never heard in this garden
+  before blooms in gold.
+- Touch a bird, the bloom or a portrait in the gallery and its own recording
+  plays through the Pi's speaker, with the wake word muted for the duration.
+- Ten quiet minutes and the frame cycles today's portraits. After last light,
+  BirdFrame's painting of the day hangs as the closing plate with the day's
+  narration beneath it.
+- A ring pulses from the hedge each time the bridge hears from BirdFrame. When
+  BirdFrame is unreachable the ring stops, the scene fogs, and the caption
+  says so with the time of the last call.
+
+All motion runs on the compositor (`translate`, `scale`, `rotate`,
+`opacity`): no blur, no backdrop filters. The frame is a 1200 × 1920 stage
+scaled to the viewport, so it is pixel-exact on the Touch Display 2.
+
+When a conversation opens, the launcher sends the Realtime session one system
+message describing what the screen knows (the latest bird and its tier, the
+last hour's roster, first-ever visitors, the weather), so "what was that
+bird?" is answered from the same data the painting shows.
+
 ## Architecture
 
 ```text
@@ -23,15 +81,20 @@ Seeed microphones
 Inline launcher ↔ Pi loopback bridge ↔ Mac voice/home broker
       │                 │                    │
       │                 │                    └─ persistent OpenClaw Gateway
-      │                 └─ wlrctl + native camera       └─ agent/tools
-      └─ BirdFrame live card/window
+      │                 ├─ wlrctl + native camera       └─ agent/tools
+      │                 ├─ one long poll to BirdFrame → server-sent events
+      │                 └─ portrait, painting and snapshot cache on the Pi
+      └─ the frame, the BirdFrame card, and the journal window
 ```
 
 The runtime pieces are:
 
 - `touchscreen-bridge.service`: serves the static launcher on
-  `127.0.0.1:8765`, exposes local appliance endpoints, captures camera frames,
-  and switches windows.
+  `127.0.0.1:8765`, exposes local appliance endpoints, keeps one long poll
+  open to BirdFrame and republishes arrivals as server-sent events, caches
+  Wikimedia portraits and the day's painting under
+  `~/.cache/touchscreen-launcher`, proxies recordings, sets the backlight,
+  captures camera frames, and switches windows.
 - `touchscreen-launcher.service`: runs Chromium as the portrait kiosk with a
   dedicated profile.
 - `touchscreen-wake.service`: listens locally for “Computer” through PipeWire
@@ -137,7 +200,24 @@ cd /home/dan/touchscreen-launcher-src
 
 The installer creates an atomic timestamped launcher release, installs the
 bridge and wake listener, writes a mode-`0600` non-secret environment file,
-enables all three user services, and restarts the kiosk.
+creates the cache directory, enables all three user services, and restarts
+the kiosk.
+
+The frame needs to know where the window is and which way it faces. The
+installer writes these defaults, which can be overridden in the environment
+before running it:
+
+```text
+LAUNCHER_LATITUDE=55.95
+LAUNCHER_LONGITUDE=-3.19
+LAUNCHER_FACING=180
+LAUNCHER_PLACE=Edinburgh
+```
+
+The backlight is written through `/sys/class/backlight`, which Raspberry Pi
+OS grants to the `video` group; the service user must belong to it. The bridge
+service lists `~/.cache/touchscreen-launcher` in `ReadWritePaths` so the cache
+survives `ProtectHome=read-only`.
 
 ## Local API
 
@@ -147,6 +227,14 @@ The bridge binds to loopback only.
 | --- | --- |
 | `GET /api/status` | OpenClaw, voice broker, BirdFrame, and wake-service health |
 | `GET /api/birdframe` | Read-only proxy of BirdFrame’s live snapshot |
+| `GET /api/birdframe/events` | Server-sent events: `snapshot` every 30 s, `detection` within a second of a call, `heartbeat` |
+| `GET /api/birdframe/today` | Today's species, proxied |
+| `GET /api/birdframe/day` | Today's painting, clips and narration, with bridge URLs |
+| `GET /api/birdframe/portrait/:scientific` | Wikimedia portrait metadata with credit; `/image` serves the cached file |
+| `GET /api/birdframe/artwork/:id?w=` | The day's painting, cached on the Pi |
+| `GET /api/birdframe/clip/:day/:name` | A species' recording, proxied to the speaker |
+| `GET /api/config` | Latitude, longitude, window facing and place name |
+| `GET/POST /api/display` | Read or set the panel backlight (`{"brightness": 0..1}`) |
 | `GET /api/camera.jpg` | Fresh native IMX708 JPEG frame |
 | `GET /api/wake` | Pending wake sequence for launcher/extension |
 | `POST /api/wake` | Trigger or acknowledge a local wake event |
@@ -304,6 +392,36 @@ launchctl print gui/501/com.dan.pi-touchscreen-voice-broker
 tail -f /Users/dan/Library/Logs/pi-touchscreen-voice-broker.log
 tail -f /Users/dan/Library/Logs/pi-touchscreen-voice-broker.error.log
 ```
+
+## Developing the frame on a laptop
+
+The painting can be built without a Pi, a Mac broker or BirdFrame:
+
+```bash
+npm run appliance:build
+MOCK_SCENE=chorus node scripts/mock-bridge.mjs      # http://127.0.0.1:8765
+```
+
+Scenes are `quiet`, `chorus`, `rain`, `night`, `unreachable`, `new`,
+`winter` and `summer-noon`. The page accepts `?at=2026-06-21T04:12` (or
+`?at=04:12`) to run the whole frame from that moment, `?speed=60` to run it
+sixty times faster, and `?mode=home` to open on the home screen. Point
+`MOCK_ARTWORK` at a PNG to hang a painting at night and `MOCK_PORTRAITS_DIR`
+at a folder of `<scientific name>.jpg` files for real portraits; otherwise
+placeholders are drawn.
+
+`node scripts/screenshot-frame.mjs [scene…]` renders every scene at panel
+size into `outputs/`, and `node scripts/silhouette-sheet.mjs` renders every
+bird silhouette in every pose for review. Both use Playwright's Chromium.
+
+To exercise the real bridge, `node scripts/mock-birdframe.mjs` stands in for
+BirdFrame (a call every eight seconds), and the bridge runs against it with
+`BIRDFRAME_URL=http://127.0.0.1:9355 LAUNCHER_STATIC_ROOT=dist-appliance
+LAUNCHER_CACHE_ROOT=/tmp/touchscreen-cache python3 bridge/launcher_bridge.py`.
+
+The scene logic is pure and tested: `node --test tests/frame-*.test.mjs`
+covers the solar arithmetic, the palette, the archetype table, the snapshot
+parser, bodies, blooms, quiet mode, weather and the voice context.
 
 ## Diagnostics
 
