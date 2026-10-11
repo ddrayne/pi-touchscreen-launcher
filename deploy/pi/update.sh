@@ -6,11 +6,13 @@
 #   ./deploy/pi/update.sh                                   # main
 #   ./deploy/pi/update.sh claude/vigilant-brahmagupta-wwyylv
 #
-# First time on a Pi, or when this script is not there yet:
-#   curl -fsSL https://raw.githubusercontent.com/ddrayne/pi-touchscreen-launcher/main/deploy/pi/update.sh | bash -s -- main
-#
-# For a private repository export GITHUB_TOKEN (read access to the repo)
-# before running; the download then goes through the API.
+# The repository is private: export GITHUB_TOKEN (a fine-grained token with
+# read access to the repository's contents) before running; the download
+# then goes through the API. First time on a Pi, or from a phone:
+#   export GITHUB_TOKEN="$(cat ~/.config/touchscreen-launcher/github-token)"
+#   curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+#     https://raw.githubusercontent.com/ddrayne/pi-touchscreen-launcher/main/deploy/pi/update.sh \
+#     | bash -s -- main
 set -euo pipefail
 
 branch="${1:-main}"
@@ -20,6 +22,10 @@ asset="touchscreen-launcher.tar.gz"
 tag="appliance-${branch//\//-}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+if [[ -z "${GITHUB_TOKEN:-}" && -r "$HOME/.config/touchscreen-launcher/github-token" ]]; then
+  GITHUB_TOKEN="$(tr -d '[:space:]' < "$HOME/.config/touchscreen-launcher/github-token")"
+fi
 
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   release="$(curl -fsSL \
@@ -36,8 +42,11 @@ print(next(a["url"] for a in release["assets"] if a["name"] == sys.argv[1]))
     -H "Accept: application/octet-stream" \
     -o "$work/$asset" "$asset_url"
 else
-  curl -fsSL -o "$work/$asset" \
-    "https://github.com/$repo/releases/download/$tag/$asset"
+  if ! curl -fsSL -o "$work/$asset" \
+    "https://github.com/$repo/releases/download/$tag/$asset"; then
+    echo "Could not download the $branch build. For a private repository, export GITHUB_TOKEN or save a token in ~/.config/touchscreen-launcher/github-token." >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "$work/src"

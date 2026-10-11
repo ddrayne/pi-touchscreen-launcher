@@ -203,10 +203,20 @@ cd /home/dan/touchscreen-launcher-src
 ./deploy/pi/update.sh main                      # or any branch name
 ```
 
-The first time, or from a phone over SSH, the script can be fetched straight
-from GitHub: `curl -fsSL https://raw.githubusercontent.com/ddrayne/pi-touchscreen-launcher/main/deploy/pi/update.sh | bash -s -- main`.
-For a private repository export `GITHUB_TOKEN` first. The Mac broker is not
-part of that bundle; deploy it with `./deploy/mac/activate.command` as before.
+The repository is private, so the Pi needs a fine-grained GitHub token with
+read access to its contents, exported as `GITHUB_TOKEN` (for example from
+`~/.config/touchscreen-launcher/github-token`, mode `0600`). The first time,
+or from a phone over SSH, the script can be fetched straight from GitHub:
+
+```bash
+export GITHUB_TOKEN="$(cat ~/.config/touchscreen-launcher/github-token)"
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/ddrayne/pi-touchscreen-launcher/main/deploy/pi/update.sh \
+  | bash -s -- main
+```
+
+The Mac broker is not part of that bundle; deploy it with
+`./deploy/mac/activate.command` as before.
 
 The installer creates an atomic timestamped launcher release, installs the
 bridge and wake listener, writes a mode-`0600` non-secret environment file,
