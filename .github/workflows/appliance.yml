@@ -1,0 +1,73 @@
+# Builds the appliance bundle and publishes it as a rolling prerelease per
+# branch, so the Pi can install a branch with deploy/pi/update.sh without a
+# Mac in the loop. The Mac broker is deployed separately (deploy/mac).
+name: Appliance build
+
+on:
+  push:
+    branches:
+      - main
+      - "claude/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: appliance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Typecheck and test the scene logic
+        run: |
+          npx tsc -p tsconfig.appliance.json --noEmit
+          node --test tests/frame-*.test.mjs tests/realtime-voice.test.mjs
+          python3 -m py_compile bridge/launcher_bridge.py bridge/wake_listener.py
+
+      - run: npm run appliance:build
+
+      - name: Package the source and the bundle for the Pi
+        run: |
+          slug="${GITHUB_REF_NAME//\//-}"
+          echo "slug=$slug" >> "$GITHUB_ENV"
+          mkdir -p /tmp/package
+          git archive --format=tar HEAD | tar -x -C /tmp/package
+          cp -a dist-appliance /tmp/package/
+          printf '%s\n%s\n%s\n' "$GITHUB_SHA" "$GITHUB_REF_NAME" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/package/RELEASE
+          tar -C /tmp/package -czf touchscreen-launcher.tar.gz .
+          ls -la touchscreen-launcher.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: touchscreen-launcher-${{ env.slug }}
+          path: touchscreen-launcher.tar.gz
+          retention-days: 14
+
+      - name: Publish the branch's rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="appliance-$slug"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --title "Appliance build · $GITHUB_REF_NAME" \
+              --notes "Rolling prebuilt appliance for branch \`$GITHUB_REF_NAME\`. On the Pi: \`./deploy/pi/update.sh $GITHUB_REF_NAME\`."
+          fi
+          gh release upload "$tag" touchscreen-launcher.tar.gz --clobber
+          gh release edit "$tag" --notes "Rolling prebuilt appliance for branch \`$GITHUB_REF_NAME\` at $GITHUB_SHA. On the Pi: \`./deploy/pi/update.sh $GITHUB_REF_NAME\`."
+          git tag -f "$tag" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$tag"

@@ -194,6 +194,20 @@ cd /home/dan/touchscreen-launcher-src
 ./deploy/pi/install.sh
 ```
 
+Or let the Pi install a branch on its own. The `Appliance build` workflow
+builds the bundle on every push and publishes it as a rolling prerelease
+tagged `appliance-<branch>`; on the Pi:
+
+```bash
+cd /home/dan/touchscreen-launcher-src
+./deploy/pi/update.sh main                      # or any branch name
+```
+
+The first time, or from a phone over SSH, the script can be fetched straight
+from GitHub: `curl -fsSL https://raw.githubusercontent.com/ddrayne/pi-touchscreen-launcher/main/deploy/pi/update.sh | bash -s -- main`.
+For a private repository export `GITHUB_TOKEN` first. The Mac broker is not
+part of that bundle; deploy it with `./deploy/mac/activate.command` as before.
+
 The installer creates an atomic timestamped launcher release, installs the
 bridge and wake listener, writes a mode-`0600` non-secret environment file,
 creates the cache directory, enables all three user services, and restarts
