@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -18,16 +19,24 @@ import {
   type VoiceConversationEntry,
 } from "../lib/voiceConversation";
 import { useFrameClock, withFrameTime } from "../lib/frame/clock";
-import { playClip, stopClip } from "../lib/frame/clips";
+import { todayTiles } from "../lib/frame/birds";
 import {
   DEFAULT_FRAME_CONFIG,
   loadFrameConfig,
   type FrameConfig,
 } from "../lib/frame/config";
 import { gardenContext } from "../lib/frame/context";
+import { usePortraits } from "../lib/frame/portraits";
 import { tierWord } from "../lib/frame/scene";
+import {
+  sunIsRising,
+  sunPosition,
+  skyPalette,
+} from "../lib/frame/solar";
 import { useBirdframeStream } from "../lib/frame/stream";
-import { Frame, type FrameMode } from "./frame/Frame";
+import { useBirdVoices } from "../lib/frame/voices";
+import { Frame, typeInkFor, type FrameMode } from "./frame/Frame";
+import { TodayBirds } from "./TodayBirds";
 
 const FRAME_WIDTH = 1200;
 const FRAME_HEIGHT = 1920;
@@ -387,7 +396,6 @@ export function Launcher() {
   const [mode, setMode] = useState<FrameMode>(initialMode);
   const [lastTouch, setLastTouch] = useState(0);
   const [frameConfig, setFrameConfig] = useState<FrameConfig>(DEFAULT_FRAME_CONFIG);
-  const [playingLatest, setPlayingLatest] = useState(false);
   const frameNow = useFrameClock(1000);
   const stream = useBirdframeStream();
   const [householdHub, setHouseholdHub] = useState<HouseholdHub | null>(null);
@@ -439,6 +447,8 @@ export function Launcher() {
       body: JSON.stringify({ action: "mute", seconds }),
     }).catch(() => undefined);
   }, []);
+  const voices = useBirdVoices(frameNow, muteWake);
+  const stopVoices = voices.stop;
 
   const acceptShoppingSnapshot = useCallback((result: ShoppingSnapshot) => {
     if (
@@ -733,12 +743,12 @@ export function Launcher() {
   useEffect(() => {
     if (mode !== "home" || shoppingOpen || cameraOpen || voiceActive) return;
     const timer = window.setTimeout(() => {
-      stopClip();
-      setPlayingLatest(false);
+      stopVoices();
+      setHubPage(0);
       setMode("frame");
     }, HOME_IDLE_MS);
     return () => window.clearTimeout(timer);
-  }, [mode, shoppingOpen, cameraOpen, voiceActive, lastTouch]);
+  }, [mode, shoppingOpen, cameraOpen, voiceActive, lastTouch, stopVoices]);
 
   const closeCamera = useCallback(() => {
     setCameraOpen(false);
@@ -1257,6 +1267,10 @@ export function Launcher() {
     [stopVoice],
   );
 
+  const cancelHubSwipe = useCallback(() => {
+    swipeStart.current = null;
+  }, []);
+
   const beginHubSwipe = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.pointerType === "mouse") return;
     swipeStart.current = event.clientX;
@@ -1299,7 +1313,28 @@ export function Launcher() {
   useEffect(() => {
     contextRef.current = () => gardenContext(frameNow, frameConfig, snapshot, hubWeather);
   }, [frameNow, frameConfig, snapshot, hubWeather]);
-  const species = snapshot?.species.slice(0, 4) ?? [];
+
+  // Home sits on the frame's sky, so its type follows the same ink.
+  const skyTick = Math.floor(frameNow / 60_000) * 60_000;
+  const homeSky = useMemo(() => {
+    const sun = sunPosition(skyTick, frameConfig.latitude, frameConfig.longitude);
+    const rising = sunIsRising(skyTick, frameConfig.latitude, frameConfig.longitude);
+    const darkness = skyPalette(sun.elevation, rising).darkness;
+    return {
+      night: darkness > 0.3,
+      style: { "--home-type-rgb": typeInkFor(darkness).join(" ") } as CSSProperties,
+    };
+  }, [skyTick, frameConfig.latitude, frameConfig.longitude]);
+
+  const tilesTick = Math.floor(frameNow / 15_000) * 15_000;
+  const birdTiles = useMemo(() => todayTiles(snapshot, tilesTick), [snapshot, tilesTick]);
+  const latestScientificName = snapshot?.latest?.scientificName;
+  const birdPortraitNames = useMemo(() => {
+    const names = birdTiles.tiles.map((tile) => tile.species.scientificName).filter(Boolean);
+    if (latestScientificName) names.push(latestScientificName);
+    return names;
+  }, [birdTiles, latestScientificName]);
+  const birdPortraits = usePortraits(birdPortraitNames);
   const latestCall = snapshot?.latest ?? null;
   const latestAgoSeconds = latestCall
     ? Math.max(0, Math.round((frameNow - latestCall.at) / 1000))
@@ -1307,21 +1342,10 @@ export function Launcher() {
   const newToday = snapshot?.newToday ?? [];
   const todayCount = snapshot?.todaySpeciesCount ?? 0;
   const hearLatest = () => {
-    if (playingLatest) {
-      stopClip();
-      setPlayingLatest(false);
-      return;
-    }
-    if (!latestCall?.clipUrl) return;
-    setPlayingLatest(true);
-    playClip(`/api/birdframe/clip?url=${encodeURIComponent(latestCall.clipUrl)}`, {
-      onStart: (duration) => muteWake(Math.min(60, duration + 1.5)),
-      onEnd: () => {
-        setPlayingLatest(false);
-        muteWake(1);
-      },
-    });
+    if (latestCall) voices.hear(latestCall.commonName, latestCall.clipUrl);
   };
+  const playingLatest = latestCall !== null && voices.playing === latestCall.commonName;
+  const latestPortrait = latestCall ? birdPortraits.get(latestCall.scientificName) ?? null : null;
   const activeShoppingItems = shopping.items.filter((item) => !item.completed);
   const completedShoppingItems = shopping.items.filter((item) => item.completed);
   const activeShoppingGroups = shoppingCategoryOrder.flatMap((category) => {
@@ -1428,6 +1452,9 @@ export function Launcher() {
         }
         finishHubSwipe(event);
       }}
+      onPointerCancel={cancelHubSwipe}
+      data-night={homeSky.night}
+      style={homeSky.style}
     >
       <Frame
         now={frameNow}
@@ -1436,7 +1463,7 @@ export function Launcher() {
         hub={householdHub}
         shoppingCount={shopping.activeCount}
         mode={mode}
-        muteWake={muteWake}
+        voices={voices}
         onOpenJournal={openBirdframe}
       />
       {mode === "frame" ? null : (
@@ -1445,15 +1472,17 @@ export function Launcher() {
         <button
           type="button"
           aria-current={hubPage === 0 ? "page" : undefined}
-          aria-label="Voice home"
           onClick={() => showHubPage(0)}
-        />
+        >
+          Voice
+        </button>
         <button
           type="button"
           aria-current={hubPage === 1 ? "page" : undefined}
-          aria-label="Household hub"
           onClick={() => showHubPage(1)}
-        />
+        >
+          Household
+        </button>
       </nav>
       {hubPage === 0 ? (
         <div className="launcher__frame">
@@ -1556,19 +1585,13 @@ export function Launcher() {
                 {latestCall?.tier ? ` · ${tierWord(latestCall.tier)}` : ""}
                 {todayCount ? ` · ${todayCount} voices today` : ""}
               </p>
-              <div className="bird-card__voices">
-                {species.length > 0 ? (
-                  species.map((entry) => (
-                    <span className="bird-card__voice" key={entry.commonName}>
-                      {entry.commonName} · {entry.count}
-                    </span>
-                  ))
-                ) : (
-                  <span className="bird-card__voice">
-                    Listening across the last {snapshot?.windowMinutes || 60} minutes
-                  </span>
-                )}
-              </div>
+              {latestPortrait ? (
+                <span
+                  className="bird-card__portrait"
+                  style={{ backgroundImage: `url("${latestPortrait.image}")` }}
+                  aria-hidden="true"
+                />
+              ) : null}
             </button>
             {latestCall?.clipUrl ? (
               <button
@@ -1651,6 +1674,18 @@ export function Launcher() {
             </button>
           </div>
         </section>
+
+        <TodayBirds
+          tiles={birdTiles.tiles}
+          more={birdTiles.more}
+          portraits={birdPortraits}
+          playing={voices.playing}
+          newest={latestCall?.commonName ?? null}
+          reachable={stream.reachable}
+          lastHeardAt={latestCall?.at ?? null}
+          onHear={(commonName) => voices.hear(commonName)}
+          onOpenJournal={openBirdframe}
+        />
         </div>
       ) : (
         <section className="household-page" aria-label="Household hub">
@@ -1658,7 +1693,6 @@ export function Launcher() {
             <div>
               <p className="launcher__eyebrow">Household · live</p>
               <h1>Today at home</h1>
-              <p>Swipe right for voice</p>
             </div>
             <div className="household-weather">
               <span aria-hidden="true">

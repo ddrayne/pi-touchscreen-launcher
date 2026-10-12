@@ -47,8 +47,8 @@ straight to a visible frame before tidying. The branch therefore carries:
 - §3.5 the event stream, the bloom with Wikimedia portrait and credit, first
   voice and new-to-garden treatments;
 - §3.6 hearing a bird through the speaker with the wake word muted;
-- §3.7 the gallery strip, quiet mode, night rest with the day's painting and
-  narration;
+- §3.7 the gallery strip, quiet mode, and the day's painting as a small plate
+  beside the agenda after dark (the roll call stays up all night);
 - §3.8 Fraunces and Newsreader, §3.9 the honesty line;
 - §4 the listening pulse and the fog when BirdFrame is unreachable;
 - §5.3 the backlight route (the schedule that drives it is still to come);
@@ -264,10 +264,10 @@ This is the one thing only the launcher can do, and it can do it today.
   it is the day's cast.
 - Quiet mode: ten minutes without a call and the frame cycles today's portraits over the
   live sky, twelve seconds each with a slow pan, credited. Any call interrupts it.
-- Night rest: after last light, today's generated painting from
-  `/api/day/{today}.images` hangs as the closing plate, with the `/api/narration` line
-  as its caption and the day's tally. Stars behind it. Then the backlight dims (§5.3).
-  BirdFrame paints the day once; this is the first screen in the house to hang it.
+- Night plate: after last light, today's generated painting from
+  `/api/day/{today}.images` hangs as a small plate beside the agenda, one tap from the
+  journal. The live roll call stays the heart of the board all night, topped up from
+  earlier today when the hour is thin. Then the backlight dims (§5.3).
 
 ### 3.8 Type
 

@@ -5,10 +5,9 @@
  * fabricate. The journal is one tap away.
  */
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useMemo, type CSSProperties } from "react";
 import { agendaFor, type HubEvent } from "../../lib/frame/agenda.ts";
-import { withFrameTime } from "../../lib/frame/clock.ts";
-import { playClip, stopClip } from "../../lib/frame/clips.ts";
+import { showPaintingPlate } from "../../lib/frame/birds.ts";
 import type { FrameConfig } from "../../lib/frame/config.ts";
 import { usePortraits } from "../../lib/frame/portraits.ts";
 import {
@@ -34,6 +33,7 @@ import {
   type Rgb,
 } from "../../lib/frame/solar.ts";
 import type { BirdframeStream } from "../../lib/frame/stream.ts";
+import type { BirdVoices } from "../../lib/frame/voices.ts";
 import { parseForecast, weatherMood, type HubWeather } from "../../lib/frame/weather.ts";
 import { Agenda, RollCall, WeatherStrip } from "./Board.tsx";
 import { Gallery } from "./Gallery.tsx";
@@ -49,15 +49,6 @@ export type FrameHub = {
   events?: HubEvent[];
 };
 
-type DayRecord = {
-  date: string;
-  artwork: string | null;
-  narration: string;
-  speciesCount: number;
-  newSpecies: string[];
-  clips: Map<string, string>;
-};
-
 type FrameProps = {
   now: number;
   config: FrameConfig;
@@ -65,7 +56,7 @@ type FrameProps = {
   hub: FrameHub | null;
   shoppingCount: number;
   mode: FrameMode;
-  muteWake: (seconds: number) => void;
+  voices: BirdVoices;
   onOpenJournal: () => void;
 };
 
@@ -83,6 +74,14 @@ const GOLD: Rgb = [201, 133, 54];
 const PULSE_MS = 3_000;
 const ROLL_ROWS = 6;
 
+/**
+ * Type follows the paper, not the sun: dark ink while the washed sky is
+ * light, cream once dusk has taken it. Home uses it too, over the same sky.
+ */
+export function typeInkFor(darkness: number): Rgb {
+  return mixRgb(TYPE_DAY, TYPE_NIGHT, smoothstep(0.18, 0.3, darkness));
+}
+
 function clockOf(at: number): string {
   return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(
     new Date(at),
@@ -95,65 +94,10 @@ function dateOf(at: number): string {
   );
 }
 
-function dayKey(at: number): string {
-  const date = new Date(at);
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
-function clipUrlFor(day: DayRecord | null, commonName: string, at: number): string {
-  return (
-    day?.clips.get(commonName) ??
-    `/api/birdframe/clip/${dayKey(at)}/${encodeURIComponent(commonName)}`
-  );
-}
-
-function useDayRecord(key: string): DayRecord | null {
-  const [day, setDay] = useState<DayRecord | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const response = await fetch(withFrameTime("/api/birdframe/day"), { cache: "no-store" });
-        if (!response.ok) throw new Error("no day");
-        const raw = (await response.json()) as Record<string, unknown>;
-        const images = Array.isArray(raw.images) ? raw.images : [];
-        const latest = images
-          .map((entry) => (entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {}))
-          .find((entry) => typeof entry.url === "string");
-        const clips = new Map<string, string>();
-        for (const entry of Array.isArray(raw.clips) ? raw.clips : []) {
-          const clip = entry as Record<string, unknown>;
-          if (typeof clip.common_name === "string" && typeof clip.url === "string") {
-            clips.set(clip.common_name, clip.url);
-          }
-        }
-        if (cancelled) return;
-        setDay({
-          date: typeof raw.date === "string" ? raw.date : key,
-          artwork: latest ? String(latest.url) : null,
-          narration: typeof raw.narration === "string" ? raw.narration : "",
-          speciesCount: Array.isArray(raw.species) ? raw.species.length : 0,
-          newSpecies: Array.isArray(raw.new_species) ? raw.new_species.map(String) : [],
-          clips,
-        });
-      } catch {
-        if (!cancelled) setDay(null);
-      }
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), 30 * 60_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [key]);
-  return day;
-}
-
-export function Frame({ now, config, stream, hub, shoppingCount, mode, muteWake, onOpenJournal }: FrameProps) {
+export function Frame({ now, config, stream, hub, shoppingCount, mode, voices, onOpenJournal }: FrameProps) {
   const { snapshot, reachable, heartbeat } = stream;
+  // Hearing a bird: its own recording through the Pi's speaker, shared with home.
+  const { day, playing, songLevel, hear } = voices;
   const paletteTick = Math.floor(now / 5_000) * 5_000;
   const rowsTick = Math.floor(now / 15_000) * 15_000;
   const weather = hub?.weather ?? null;
@@ -182,13 +126,13 @@ export function Frame({ now, config, stream, hub, shoppingCount, mode, muteWake,
   const isNight = sun.elevation < -6;
 
   const rows = useMemo(() => rollCall(snapshot, rowsTick, ROLL_ROWS), [snapshot, rowsTick]);
-  const moreCount = snapshot && !rows[0]?.earlier ? Math.max(0, snapshot.species.length - rows.length) : 0;
+  const hourRows = rows.filter((row) => !row.earlier).length;
+  const moreCount = snapshot && hourRows === rows.length ? Math.max(0, snapshot.species.length - rows.length) : 0;
   const cast = useMemo(() => castFor(snapshot), [snapshot]);
   const earlierToday = useMemo(() => {
     const shown = new Set(rows.map((row) => row.species.commonName));
     return cast.filter((species) => !shown.has(species.commonName));
   }, [cast, rows]);
-  const day = useDayRecord(dayKey(now));
 
   // The bloom: what, if anything, is having its moment, as a pure function of
   // the snapshot and the clock.
@@ -196,8 +140,9 @@ export function Frame({ now, config, stream, hub, shoppingCount, mode, muteWake,
   const leaving = bloomNow !== null && bloomIsLeaving(bloomNow, now);
   const bloom = bloomNow && !leaving ? bloomNow : null;
 
-  // Night rest: after last light the day's painting hangs as the closing plate.
-  const rest = palette.darkness > 0.85 && Boolean(day?.artwork) && !bloom && mode === "frame";
+  // After last light the day's painting hangs as a plate beside the agenda;
+  // the roll call stays the heart of the board.
+  const plate = showPaintingPlate(palette.darkness, day?.artwork) ? day?.artwork ?? null : null;
 
   // The listening pulse: a ring every time the bridge hears from BirdFrame.
   const pulsing = reachable && heartbeat > 0 && now - heartbeat < PULSE_MS;
@@ -211,39 +156,10 @@ export function Frame({ now, config, stream, hub, shoppingCount, mode, muteWake,
   }, [rows, earlierToday, bloomNow]);
   const portraits = usePortraits(portraitNames);
 
-  // Hearing a bird: its own recording through the Pi's speaker.
-  const [playing, setPlaying] = useState<string | null>(null);
-  const [songLevel, setSongLevel] = useState(0);
-  const hear = useCallback(
-    (commonName: string, explicitUrl?: string | null) => {
-      if (playing === commonName) {
-        stopClip();
-        setPlaying(null);
-        return;
-      }
-      const url = explicitUrl
-        ? `/api/birdframe/clip?url=${encodeURIComponent(explicitUrl)}`
-        : clipUrlFor(day, commonName, now);
-      setPlaying(commonName);
-      playClip(url, {
-        onStart: (duration) => muteWake(Math.min(60, duration + 1.5)),
-        onLevel: setSongLevel,
-        onEnd: () => {
-          setPlaying((current) => (current === commonName ? null : current));
-          setSongLevel(0);
-          muteWake(1);
-        },
-      });
-    },
-    [day, muteWake, now, playing],
-  );
-  useEffect(() => () => stopClip(), []);
   const castTapped = useCallback((species: FrameSpecies) => hear(species.commonName), [hear]);
 
   const ink = mixRgb(INK_DAY, INK_NIGHT, palette.darkness);
-  // Type follows the paper, not the sun: dark ink while the washed sky is
-  // light, cream once dusk has taken it.
-  const typeInk = mixRgb(TYPE_DAY, TYPE_NIGHT, smoothstep(0.18, 0.3, palette.darkness));
+  const typeInk = typeInkFor(palette.darkness);
   const paper = mixRgb(PAPER_DAY, PAPER_NIGHT, palette.darkness);
   const ground = mixRgb(GROUND_DAY, GROUND_NIGHT, palette.darkness);
   const cloud = mixRgb(CLOUD_DAY, CLOUD_NIGHT, palette.darkness);
@@ -273,7 +189,7 @@ export function Frame({ now, config, stream, hub, shoppingCount, mode, muteWake,
         : `${snapshot.species.length} ${snapshot.species.length === 1 ? "voice" : "voices"} in the last hour · ${snapshot.todaySpeciesCount} today`;
 
   return (
-    <div className="frame" data-mode={mode} data-night={isNight} data-rest={rest} style={style} aria-hidden={mode !== "frame"}>
+    <div className="frame" data-mode={mode} data-night={isNight} data-plate={plate !== null} style={style} aria-hidden={mode !== "frame"}>
       <div className="frame__painting">
         <Sky palette={palette} sun={sun} moon={moon} illumination={illumination} mood={mood} facing={config.facing} />
         <div className="frame-wash" />
@@ -295,30 +211,32 @@ export function Frame({ now, config, stream, hub, shoppingCount, mode, muteWake,
           <span className="frame-clock__date">{dateOf(now)}</span>
         </div>
         <WeatherStrip now={now} weather={weather} forecast={forecast} night={isNight} />
-        {rest && day?.artwork ? (
-          <figure className="frame-rest">
-            <div className="frame-rest__plate" style={{ backgroundImage: `url("${day.artwork}")` }} />
-            <figcaption>
-              {day.narration ? <p className="frame-rest__caption">{day.narration}</p> : null}
-              <p className="frame-rest__tally">
-                {day.speciesCount || snapshot?.todaySpeciesCount || 0} voices today · BirdFrame&apos;s painting of the day
-              </p>
-            </figcaption>
-          </figure>
-        ) : (
-          <RollCall
-            rows={rows}
-            bloom={bloom}
-            leaving={leaving}
-            portraits={portraits}
-            playing={playing}
-            songLevel={songLevel}
-            daylight={daylight}
-            moreCount={moreCount}
-            onTap={hear}
-          />
-        )}
+        <RollCall
+          rows={rows}
+          bloom={bloom}
+          leaving={leaving}
+          portraits={portraits}
+          playing={playing}
+          songLevel={songLevel}
+          daylight={daylight}
+          moreCount={moreCount}
+          onTap={hear}
+        />
         <Agenda items={agenda} shoppingCount={shoppingCount} />
+        {plate ? (
+          <button
+            type="button"
+            className="frame-plate"
+            aria-label="BirdFrame's painting of the day; open the journal"
+            onPointerUp={(event) => {
+              event.stopPropagation();
+              onOpenJournal();
+            }}
+          >
+            <span className="frame-plate__image" style={{ backgroundImage: `url("${plate}")` }} />
+            <span className="frame-plate__caption">Painting of the day</span>
+          </button>
+        ) : null}
         <Gallery cast={earlierToday} portraits={portraits} activeName={playing} onTap={castTapped} />
         <div className="frame-foot">
           <span>An impression of the last hour · one dot is one call</span>

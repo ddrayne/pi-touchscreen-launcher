@@ -26,6 +26,9 @@ test("BirdFrame times are read on the local clock and roll back across midnight"
   const received = new Date(2026, 9, 6, 0, 5, 0).getTime();
   const lateYesterday = parseBirdframeTime("23:58:00", received);
   assert.equal(new Date(lateYesterday).getDate(), 5);
+  const minutes = parseBirdframeTime("18:55", new Date(2026, 9, 12, 21, 43).getTime());
+  assert.equal(new Date(minutes).getHours(), 18, "the day list gives HH:MM without seconds");
+  assert.equal(new Date(minutes).getMinutes(), 55);
   const full = parseBirdframeTime("2026-10-06T07:41:52", received);
   assert.equal(new Date(full).getHours(), 7);
   assert.equal(parseBirdframeTime("", received), received);
@@ -128,6 +131,10 @@ test("the roll call lists the hour newest first and falls back to today", async 
   const later = rollCall(snapshot, RECEIVED + 2 * 60 * 60_000);
   assert.ok(later.length > 0, "a silent hour shows today's cast");
   assert.ok(later.every((row) => row.earlier));
+  const thin = rollCall({ ...snapshot, species: snapshot.species.slice(0, 1) }, RECEIVED);
+  assert.equal(thin[0].earlier, false, "the hour's bird leads");
+  assert.ok(thin.length > 1 && thin.slice(1).every((row) => row.earlier), "a thin hour is topped up from today");
+  assert.equal(new Set(thin.map((row) => row.species.commonName)).size, thin.length, "no bird twice");
   assert.deepEqual(rollCall(null, RECEIVED), []);
 });
 

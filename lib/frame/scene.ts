@@ -103,10 +103,10 @@ export function parseBirdframeTime(value: unknown, receivedAt: number): number {
     const parsed = new Date(text).getTime();
     return Number.isFinite(parsed) ? parsed : receivedAt;
   }
-  const match = /^(\d{2}):(\d{2}):(\d{2})$/.exec(text);
+  const match = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
   if (!match) return receivedAt;
   const day = new Date(receivedAt);
-  day.setHours(Number(match[1]), Number(match[2]), Number(match[3]), 0);
+  day.setHours(Number(match[1]), Number(match[2]), Number(match[3] ?? 0), 0);
   let at = day.getTime();
   // A time later than now belongs to yesterday (the snapshot crossed midnight).
   if (at > receivedAt + 60_000) at -= 86_400_000;
@@ -294,8 +294,8 @@ export type RollRow = {
 };
 
 /**
- * The roll call: every species in the window, newest first. When the hour is
- * silent, today's cast stands in, marked as earlier, so the board is never a
+ * The roll call: every species in the window, newest first, then today's
+ * cast, marked as earlier, until the rows are full, so the board is never a
  * blank.
  */
 export function rollCall(snapshot: FrameSnapshot | null, now: number, limit = 7): RollRow[] {
@@ -305,17 +305,19 @@ export function rollCall(snapshot: FrameSnapshot | null, now: number, limit = 7)
     .map((species) => ({ species, lastHeard: species.lastHeard ?? fallbackLastHeard }))
     .filter(({ lastHeard }) => inkFor(lastHeard, now, snapshot.windowMinutes) > 0)
     .sort((left, right) => right.lastHeard - left.lastHeard);
-  if (inWindow.length) {
-    return inWindow.slice(0, limit).map(({ species, lastHeard }, rank) => ({
-      species: { ...species, lastHeard },
-      recency: Math.max(0.3, inkFor(lastHeard, now, snapshot.windowMinutes)),
-      rank,
-      earlier: false,
-    }));
-  }
-  return castFor(snapshot)
-    .slice(0, limit)
-    .map((species, rank) => ({ species, recency: 0.45, rank, earlier: true }));
+  const recent: RollRow[] = inWindow.slice(0, limit).map(({ species, lastHeard }, rank) => ({
+    species: { ...species, lastHeard },
+    recency: Math.max(0.3, inkFor(lastHeard, now, snapshot.windowMinutes)),
+    rank,
+    earlier: false,
+  }));
+  // A thin hour is topped up from earlier today, so the board stays full of birds.
+  const shown = new Set(recent.map((row) => row.species.commonName));
+  const earlier = castFor(snapshot)
+    .filter((species) => !shown.has(species.commonName))
+    .slice(0, limit - recent.length)
+    .map((species, index) => ({ species, recency: 0.45, rank: recent.length + index, earlier: true }));
+  return [...recent, ...earlier];
 }
 
 export type BloomOptions = {

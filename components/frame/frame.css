@@ -339,58 +339,55 @@
   pointer-events: none;
 }
 
-.frame-rest {
+/* After last light the day's painting hangs as a plate beside the agenda. */
+.frame-plate {
   position: absolute;
-  left: 600px;
-  top: 470px;
-  width: 560px;
-  margin: 0;
-  translate: -50% 0;
-  animation: frame-rest-in 1600ms ease both;
+  right: 64px;
+  top: 1494px;
+  display: grid;
+  width: 176px;
+  gap: 12px;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  animation: frame-plate-in 1600ms ease both;
 }
 
-@keyframes frame-rest-in {
+@keyframes frame-plate-in {
   from {
     opacity: 0;
-    translate: -50% 12px;
+    translate: 0 12px;
   }
 
   to {
     opacity: 1;
-    translate: -50% 0;
+    translate: 0 0;
   }
 }
 
-.frame-rest__plate {
-  width: 560px;
-  height: 746px;
+.frame-plate__image {
+  display: block;
+  width: 176px;
+  height: 212px;
   background: center / cover no-repeat;
   box-shadow:
-    0 0 0 10px rgb(var(--frame-paper-rgb) / 0.92),
-    0 0 0 11px rgb(var(--frame-ink-rgb) / 0.5);
+    0 0 0 6px rgb(var(--frame-paper-rgb) / 0.92),
+    0 0 0 7px rgb(var(--frame-ink-rgb) / 0.5);
 }
 
-.frame-rest figcaption {
-  margin: 0 -120px;
-}
-
-.frame-rest__caption {
-  margin: 36px 16px 0;
-  font-family: "Fraunces Variable", Georgia, serif;
-  font-size: 27px;
-  font-style: italic;
-  font-weight: 350;
-  line-height: 1.3;
-  text-align: center;
-}
-
-.frame-rest__tally {
-  margin: 16px 0 0;
-  font-size: 18px;
+.frame-plate__caption {
+  font-size: 13px;
   letter-spacing: 0.2em;
   text-align: center;
   text-transform: uppercase;
-  opacity: 0.8;
+  opacity: 0.75;
+}
+
+.frame[data-plate="true"] .frame-agenda {
+  right: 290px;
 }
 
 .frame-grain {

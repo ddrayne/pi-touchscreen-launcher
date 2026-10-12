@@ -23,6 +23,7 @@ const SCENES = [
   { name: "new-to-garden", scene: "new", at: "2026-10-06T09:12:00", wait: 6_000 },
   { name: "unreachable", scene: "unreachable", at: "2026-10-06T14:02:00", wait: 5_000 },
   { name: "home", scene: "quiet", at: "2026-10-06T07:45:00", wait: 2_500, query: "&mode=home" },
+  { name: "night-home", scene: "night", at: "2026-10-06T23:20:00", wait: 3_000, query: "&mode=home" },
 ];
 
 const TIMEZONE = process.env.FRAME_TZ || "Europe/London";

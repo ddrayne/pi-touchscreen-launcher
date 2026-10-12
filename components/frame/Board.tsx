@@ -172,13 +172,16 @@ export const RollCall = memo(function RollCall({
           const isHero = row.rank === 0;
           const blooming = isHero && bloom !== null && bloom.commonName === species.commonName && !leaving;
           const portrait = portraits.get(species.scientificName) ?? null;
-          const kicker = blooming
-            ? bloom.kind === "new-to-garden"
-              ? "New to this garden"
-              : bloom.kind === "first-voice"
-                ? `First voice${daylight ? ` · ${daylight}` : ""}`
-                : ""
-            : "";
+          const firstEarlier = row.earlier && !earlier && !rows[row.rank - 1]?.earlier;
+          const kicker = firstEarlier
+            ? "Earlier today"
+            : blooming
+              ? bloom.kind === "new-to-garden"
+                ? "New to this garden"
+                : bloom.kind === "first-voice"
+                  ? `First voice${daylight ? ` · ${daylight}` : ""}`
+                  : ""
+              : "";
           return (
             <li
               key={species.commonName}
@@ -187,6 +190,7 @@ export const RollCall = memo(function RollCall({
               data-hero={isHero}
               data-bloom={blooming}
               data-tier={species.tier}
+              data-earlier={row.earlier}
               data-playing={playing === species.commonName}
               style={{ "--recency": String(row.recency), "--song-level": String(songLevel) } as CSSProperties}
               onPointerUp={(event) => {
