@@ -4,12 +4,14 @@
  *
  *   MOCK_SCENE=chorus PORT=8765 node scripts/mock-bridge.mjs
  *
- * Scenes: quiet, chorus, rain, night, unreachable, new, winter, summer-noon.
- * Serves dist-appliance/ and the /api routes the launcher uses. Timestamps
- * follow the ?at= the page sends, so dawn can be designed at noon.
+ * Scenes: quiet, chorus, rain, night, unreachable, new, winter, summer-noon,
+ * loud. Serves dist-appliance/ and the /api routes the launcher uses.
+ * Timestamps follow the ?at= the page sends, so dawn can be designed at noon.
+ * MOCK_PORTRAITS_DIR points at a copy of the Pi's portrait cache
+ * (<Genus_species>.json + image) so the frame shows real birds.
  */
 
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, resolve } from "node:path";
@@ -22,8 +24,16 @@ const SCENE = process.env.MOCK_SCENE || "quiet";
 const ARTWORK = process.env.MOCK_ARTWORK || "";
 const PORTRAITS_DIR = process.env.MOCK_PORTRAITS_DIR || "";
 
-const nowFixture = JSON.parse(await readFile(join(ROOT, "fixtures/now-morning.json"), "utf8"));
-const todayFixture = JSON.parse(await readFile(join(ROOT, "fixtures/today-morning.json"), "utf8"));
+const FIXTURES = {
+  morning: {
+    now: JSON.parse(await readFile(join(ROOT, "fixtures/now-morning.json"), "utf8")),
+    today: JSON.parse(await readFile(join(ROOT, "fixtures/today-morning.json"), "utf8")),
+  },
+  loud: {
+    now: JSON.parse(await readFile(join(ROOT, "fixtures/now-loud.json"), "utf8")),
+    today: JSON.parse(await readFile(join(ROOT, "fixtures/today-loud.json"), "utf8")),
+  },
+};
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -71,6 +81,17 @@ const SCENES = {
     intervalMs: 3_000,
   },
   "summer-noon": { latestAgoMs: 90_000, weather: "sunny", arrivals: [["Herring Gull", "Larus argentatus", 0.74]], intervalMs: 2_000 },
+  loud: {
+    fixture: "loud",
+    latestAgoMs: 60_000,
+    weather: "sunny",
+    arrivals: [
+      ["European Robin", "Erithacus rubecula", 0.9],
+      ["Eurasian Wren", "Troglodytes troglodytes", 0.88],
+      ["European Goldfinch", "Carduelis carduelis", 0.8],
+    ],
+    intervalMs: 8_000,
+  },
 };
 
 const WEATHER = {
@@ -83,6 +104,7 @@ const WEATHER = {
 };
 
 const scene = SCENES[SCENE] ?? SCENES.quiet;
+const { now: nowFixture, today: todayFixture } = FIXTURES[scene.fixture ?? "morning"];
 
 function sceneNow(url) {
   const at = url.searchParams.get("at");
@@ -99,10 +121,34 @@ function stamp(ms) {
   };
 }
 
-function retimedNow(now) {
+/** How far the fixture's clock moves so its newest call lands `latestAgoMs` before `now`. */
+function fixtureShift(now) {
   const latestMs = now - scene.latestAgoMs;
   const fixtureLatest = new Date(nowFixture.feed[0].timestamp).getTime();
-  const shift = latestMs - fixtureLatest;
+  return latestMs - fixtureLatest;
+}
+
+/** Species entries may carry a `last_heard` clock (HH:MM:SS); the morning fixture's do not. */
+function retimedSpecies(entries, shift, day) {
+  return entries.map((entry) => {
+    if (typeof entry.last_heard !== "string") return entry;
+    const at = new Date(`${day}T${entry.last_heard}`).getTime() + shift;
+    return { ...entry, last_heard: stamp(at).time };
+  });
+}
+
+function retimedToday(now) {
+  const shift = fixtureShift(now);
+  return {
+    ...todayFixture,
+    date: stamp(now).date,
+    species: retimedSpecies(todayFixture.species, shift, todayFixture.date),
+  };
+}
+
+function retimedNow(now) {
+  const shift = fixtureShift(now);
+  const fixtureDay = nowFixture.feed[0].timestamp.slice(0, 10);
   const feed = nowFixture.feed.map((entry) => {
     const at = new Date(entry.timestamp).getTime() + shift;
     const { date, time } = stamp(at);
@@ -128,9 +174,10 @@ function retimedNow(now) {
   const latestStamp = stamp(new Date(feed[0].timestamp).getTime());
   latest.at = latestStamp.time;
   latest.clip_url = `/api/clip/${latestStamp.date}/${encodeURIComponent(latest.common_name)}`;
+  const fixtureWindow = retimedSpecies(nowFixture.window_species, shift, fixtureDay);
   const windowSpecies = scene.owl
-    ? [{ common_name: "Tawny Owl", scientific_name: "Strix aluco", count: 2, tier: "confirmed" }, ...nowFixture.window_species]
-    : nowFixture.window_species;
+    ? [{ common_name: "Tawny Owl", scientific_name: "Strix aluco", count: 2, tier: "confirmed" }, ...fixtureWindow]
+    : fixtureWindow;
   const quietWindow = scene.latestAgoMs > 60 * 60_000;
   return {
     ...nowFixture,
@@ -228,6 +275,36 @@ const shopping = {
   syncedAt: new Date().toISOString(),
 };
 
+/** Mirrors the bridge's `safe_name`: the cache key for a scientific name. */
+function safeName(value) {
+  return value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^[._]+|[._]+$/g, "")
+    .slice(0, 120) || "unknown";
+}
+
+/**
+ * The Pi's portrait cache keeps `<safe>.json` beside the image it names. Returns
+ * the credit record with an absolute `path` to the image, a bare `{ path }` for
+ * the older `<Genus species>.jpg` layout, or null when neither exists.
+ */
+function cachedPortrait(scientificName) {
+  if (!PORTRAITS_DIR) return null;
+  const metaPath = join(PORTRAITS_DIR, `${safeName(scientificName)}.json`);
+  if (existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+      const imagePath = typeof meta.file === "string" ? join(PORTRAITS_DIR, meta.file) : "";
+      if (meta && !meta.missing && imagePath && existsSync(imagePath)) return { ...meta, path: imagePath };
+    } catch {
+      // fall through to the flat layout
+    }
+  }
+  const flat = join(PORTRAITS_DIR, `${scientificName}.jpg`);
+  return existsSync(flat) ? { path: flat, contentType: "image/jpeg" } : null;
+}
+
 function placeholderPortrait(scientificName) {
   const initials = scientificName
     .split(/\s+/)
@@ -287,11 +364,11 @@ const server = createServer(async (request, response) => {
   }
   if (path === "/api/birdframe/today") {
     if (scene.unreachable) return json(response, 502, { error: "BirdFrame is unavailable" });
-    return json(response, 200, { ...todayFixture, date: stamp(now).date });
+    return json(response, 200, retimedToday(now));
   }
   if (path === "/api/birdframe/events") {
     const send = sse(response);
-    send("snapshot", { now: retimedNow(now), today: { ...todayFixture, date: stamp(now).date }, reachable: !scene.unreachable });
+    send("snapshot", { now: retimedNow(now), today: retimedToday(now), reachable: !scene.unreachable });
     const timers = [];
     if (scene.arrivals.length && !scene.unreachable) {
       let index = 0;
@@ -312,25 +389,28 @@ const server = createServer(async (request, response) => {
   if (path.startsWith("/api/birdframe/portrait/")) {
     const rest = decodeURIComponent(path.slice("/api/birdframe/portrait/".length));
     const [scientificName, part] = rest.split("/");
+    const cached = cachedPortrait(scientificName);
     if (part === "image") {
-      const file = PORTRAITS_DIR ? join(PORTRAITS_DIR, `${scientificName}.jpg`) : "";
-      if (file && existsSync(file)) return sendFile(response, file, "image/jpeg");
+      if (cached) return sendFile(response, cached.path, cached.contentType || "image/jpeg");
       response.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "max-age=3600" });
       return response.end(placeholderPortrait(scientificName));
     }
-    return json(response, 200, {
+    const portrait = {
       image: `/api/birdframe/portrait/${encodeURIComponent(scientificName)}/image`,
-      title: scientificName,
-      artist: PORTRAITS_DIR ? "Photographer" : "Placeholder",
-      license: "CC BY-SA 4.0",
-      source: "https://commons.wikimedia.org/",
-    });
+      title: cached?.title ?? scientificName,
+      artist: cached?.artist ?? (cached ? "Photographer" : "Placeholder"),
+      license: cached?.license ?? "CC BY-SA 4.0",
+      source: cached?.source ?? "https://commons.wikimedia.org/",
+    };
+    if (cached?.tint !== undefined) portrait.tint = cached.tint;
+    if (cached?.focal !== undefined) portrait.focal = cached.focal;
+    return json(response, 200, portrait);
   }
   if (path === "/api/birdframe/day") {
     if (scene.unreachable) return json(response, 502, { error: "BirdFrame is unavailable" });
     return json(response, 200, {
       date: stamp(now).date,
-      species: todayFixture.species,
+      species: retimedToday(now).species,
       new_species: scene.newToday ?? [],
       clips: [],
       images: ARTWORK && existsSync(ARTWORK) ? [{ id: 1, url: "/api/birdframe/artwork/1" }] : [],
