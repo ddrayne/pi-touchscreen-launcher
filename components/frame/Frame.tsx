@@ -62,6 +62,8 @@ const CLOUD_NIGHT: Rgb = [46, 52, 84];
 const INK_DAY: Rgb = [22, 42, 36];
 const INK_NIGHT: Rgb = [9, 11, 24];
 const PULSE_MS = 3_000;
+/** At most this many bird blocks: a long day's cast as blocks big enough to read, the rest in more. */
+const FRAME_MAX_BIRDS = 14;
 const EMPTY_FIELD: PosterField = { window: "hour", blocks: [] };
 const NO_KEYS: ReadonlySet<string> = new Set();
 
@@ -120,7 +122,7 @@ export function Frame({
     born: ReadonlySet<string>;
   }>({ snapshot: null, tick: 0, field: EMPTY_FIELD, keys: new Set(), born: NO_KEYS });
   if (fieldState.snapshot !== snapshot || fieldState.tick !== minuteTick) {
-    const next = snapshot ? composeField(snapshot, minuteTick, fieldState.field) : EMPTY_FIELD;
+    const next = snapshot ? composeField(snapshot, minuteTick, fieldState.field, { maxBirds: FRAME_MAX_BIRDS }) : EMPTY_FIELD;
     const keys = new Set(next.blocks.map((block) => block.key));
     const born = new Set<string>();
     if (fieldState.tick) for (const key of keys) if (!fieldState.keys.has(key)) born.add(key);
