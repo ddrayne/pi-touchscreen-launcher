@@ -1,0 +1,418 @@
+/* The home pages: the poster's grid again, on a stage the size of the frame
+   and scaled with it, under the tab bar. Blocks come from poster.css; this
+   file adds the blocks only the home pages have. */
+
+.home-stage {
+  position: fixed;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  width: 1200px;
+  height: 1920px;
+  overflow: hidden;
+  transform-origin: top left;
+  transform: translateX(var(--frame-offset, 0px)) scale(var(--frame-scale, 1));
+  color: rgb(var(--frame-type-rgb));
+  font-family: "Newsreader Variable", Georgia, "Times New Roman", serif;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The last row stops short of the tab bar. */
+.poster--home {
+  padding-bottom: 150px;
+}
+
+/* In the home blocks labels sit in the flow, not pinned to the corner. */
+.pb--voice .pb__label,
+.pb--shopping .pb__label,
+.pb--look .pb__label,
+.pb--journal .pb__label,
+.pb--note .pb__label,
+.pb--diary .pb__label,
+.pb--rooms .pb__label {
+  position: static;
+}
+
+.pb__label--dim {
+  opacity: 0.55;
+}
+
+.pb .pb__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+/* Voice ---------------------------------------------------------------- */
+
+.pb--voice {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  padding: 28px 36px 26px;
+}
+
+.pb--voice .pb__greeting {
+  margin: 8px 0 0;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-optical-sizing: auto;
+  font-size: 60px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.pb--voice .pb__clock {
+  text-align: right;
+}
+
+.pb--voice .pb__time {
+  display: block;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-optical-sizing: auto;
+  font-size: 96px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 0.86;
+}
+
+.pb--voice .pb__date {
+  display: block;
+  margin-top: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.pb--voice .pb__talk {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  align-items: center;
+  align-self: center;
+  column-gap: 36px;
+  margin-top: 8px;
+}
+
+.pb--voice .assistant__orb-button {
+  width: 220px;
+}
+
+.pb--voice .assistant__ring {
+  border-color: rgb(var(--frame-type-rgb) / 0.18);
+}
+
+.pb--voice .pb__prompt {
+  margin: 0;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-optical-sizing: auto;
+  font-size: 50px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+.pb--voice .pb__hint {
+  margin: 10px 0 0;
+  font-size: 22px;
+  font-style: italic;
+  line-height: 1.3;
+  opacity: 0.78;
+}
+
+.pb--voice .pb__conversation {
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  max-height: 230px;
+  margin-top: 10px;
+  overflow: hidden;
+}
+
+.pb--voice .assistant__utterance {
+  max-width: 92%;
+  border-color: rgb(var(--frame-type-rgb) / 0.12);
+  background: rgb(var(--frame-paper-rgb) / 0.7);
+  color: rgb(var(--frame-type-rgb));
+  font-size: 19px;
+  box-shadow: none;
+}
+
+.pb--voice .assistant__speaker {
+  color: rgb(var(--frame-type-rgb) / 0.6);
+}
+
+.pb--voice .pb__status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.pb--voice .pb__end {
+  all: unset;
+  margin-left: 12px;
+  border: 1px solid rgb(var(--frame-gold-rgb));
+  border-radius: 99px;
+  padding: 8px 16px;
+  color: rgb(var(--frame-gold-rgb));
+  cursor: pointer;
+}
+
+/* The house list -------------------------------------------------------- */
+
+.pb--shopping {
+  display: flex;
+  flex-direction: column;
+  padding: 22px 26px 20px;
+}
+
+.pb--shopping .pb__count {
+  margin: 8px 0 0;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-optical-sizing: auto;
+  font-size: 34px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+
+.pb--shopping .pb__count strong {
+  margin-right: 10px;
+  font-size: 1.5em;
+  font-weight: 600;
+}
+
+.pb--shopping .pb__line {
+  margin: 10px 0 0;
+  overflow: hidden;
+  font-size: 20px;
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.78;
+}
+
+.pb--shopping[data-tall="true"] {
+  padding: 26px 30px 22px;
+}
+
+.pb--shopping .pb__open {
+  all: unset;
+  display: block;
+  cursor: pointer;
+}
+
+.pb--shopping[data-tall="true"] .pb__count {
+  font-size: 40px;
+}
+
+.pb--shopping[data-tall="true"] .pb__count strong {
+  font-size: 1.8em;
+}
+
+.pb .pb__rows {
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pb .pb__rows > li {
+  border-top: 1px solid rgb(var(--frame-type-rgb) / 0.12);
+}
+
+.pb--shopping .pb__row,
+.pb--rooms .pb__room {
+  all: unset;
+  display: grid;
+  width: 100%;
+  box-sizing: border-box;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  column-gap: 16px;
+  padding: 13px 0;
+  cursor: pointer;
+  font-size: 26px;
+  line-height: 1.15;
+}
+
+.pb .pb__check {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgb(var(--frame-type-rgb) / 0.55);
+  border-radius: 50%;
+}
+
+.pb--rooms .pb__room[data-active="true"] .pb__check {
+  border-color: rgb(var(--frame-gold-rgb));
+  background: rgb(var(--frame-gold-rgb));
+}
+
+.pb--shopping .pb__add {
+  all: unset;
+  margin-top: auto;
+  padding-top: 14px;
+  color: rgb(var(--frame-gold-rgb));
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+/* Look and the journal -------------------------------------------------- */
+
+.pb--look {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 20px 22px;
+}
+
+.pb--look .pb__label {
+  margin: 0;
+}
+
+.pb--look .pb__eye {
+  font-size: 44px;
+  line-height: 1;
+}
+
+.pb--journal,
+.pb--note {
+  display: flex;
+  flex-direction: column;
+  padding: 22px 26px 20px;
+}
+
+.pb--journal .pb__title,
+.pb--note .pb__title {
+  margin: 8px 0 0;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-optical-sizing: auto;
+  font-size: 34px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.02;
+}
+
+.pb--note .pb__title {
+  font-size: 44px;
+}
+
+.pb--note .pb__meta {
+  margin: 10px 0 0;
+  font-size: 20px;
+  font-style: italic;
+  opacity: 0.78;
+}
+
+.pb--journal .pb__go {
+  margin-top: auto;
+  color: rgb(var(--frame-gold-rgb));
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.pb--journal:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The diary and the rooms ----------------------------------------------- */
+
+.pb--diary,
+.pb--rooms {
+  display: flex;
+  flex-direction: column;
+  padding: 26px 30px 22px;
+}
+
+.pb--diary .pb__rows > li {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  align-items: baseline;
+  column-gap: 20px;
+  padding: 16px 0;
+}
+
+.pb--diary .pb__when {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.pb--diary li[data-kind="bins"] .pb__when {
+  color: rgb(var(--frame-gold-rgb));
+  opacity: 1;
+}
+
+.pb--diary .pb__summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-optical-sizing: auto;
+  font-size: 32px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+.pb .pb__empty {
+  margin: 18px 0 0;
+  font-size: 24px;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.pb--rooms .pb__room {
+  padding: 15px 0;
+}
+
+.pb--rooms .pb__room-name {
+  font-family: "Fraunces Variable", Georgia, serif;
+  font-optical-sizing: auto;
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.pb--rooms .pb__room-state {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+
+.pb--rooms .pb__room[data-active="true"] .pb__room-state {
+  color: rgb(var(--frame-gold-rgb));
+  opacity: 1;
+}
+
+.pb--rooms .pb__room:disabled,
+.pb--shopping .pb__row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The painting of the day ----------------------------------------------- */
+
+.pb--painting .pb__photo {
+  background-position: center;
+}

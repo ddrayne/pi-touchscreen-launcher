@@ -79,6 +79,7 @@ function startOfDay(at: number): number {
 function candidatesFor(
   snapshot: FrameSnapshot,
   now: number,
+  window: PosterField["window"] | undefined,
 ): { window: PosterField["window"]; voices: Voice[] } {
   const newToGarden = (species: FrameSpecies) => snapshot.newToday.includes(species.commonName);
   const hour = snapshot.species.flatMap((species) => {
@@ -87,7 +88,7 @@ function candidatesFor(
     if (ink <= 0) return [];
     return [{ species, age: Math.max(0, now - species.lastHeard), ink, newToGarden: newToGarden(species) }];
   });
-  if (hour.length >= MIN_HOUR_SPECIES) return { window: "hour", voices: hour };
+  if (window !== "today" && hour.length >= MIN_HOUR_SPECIES) return { window: "hour", voices: hour };
   const dayMs = Math.max(1, now - startOfDay(now));
   const today = castFor(snapshot).map((species) => {
     const age = species.lastHeard === undefined ? dayMs : Math.max(0, now - species.lastHeard);
@@ -194,14 +195,14 @@ function grow(allocation: Allocation, growsInPlace: GrowsInPlace): Allocation {
 }
 
 /** Rule 4 verbatim: shares of the 36 cells, snapped to the shapes, squeezed or grown to fit. */
-function freshAllocation(candidates: Candidate[]): Allocation {
+function freshAllocation(candidates: Candidate[], moreSeed: string[]): Allocation {
   const total = candidates.reduce((sum, candidate) => sum + candidate.weight, 0);
   const sized = candidates.map((candidate) => {
     let cells = Math.max(1, Math.round((FIELD_CELLS * candidate.weight) / total));
     if (candidate.hero) cells = Math.max(HERO_MIN_CELLS, cells);
     return { ...candidate, cells: snapDown(Math.min(MAX_CELLS, cells)) };
   });
-  return grow(squeeze({ sized, more: [] }), () => true);
+  return grow(squeeze({ sized, more: [...moreSeed] }), () => true);
 }
 
 /**
@@ -215,8 +216,10 @@ function allocateCells(
   candidates: Candidate[],
   previousCells: Map<string, number>,
   growsInPlace: GrowsInPlace,
+  /** Names already bound for the more block, so a cell is kept for it. */
+  moreSeed: string[] = [],
 ): Allocation {
-  const fresh = freshAllocation(candidates);
+  const fresh = freshAllocation(candidates, moreSeed);
   const sized = fresh.sized.map((block) => {
     const kept = previousCells.get(nameOf(block));
     if (kept === undefined || Math.abs(shapeIndex(kept) - shapeIndex(block.cells)) > 1) return block;
@@ -447,13 +450,40 @@ function historyOf(previous: PosterField | null): History {
   return history;
 }
 
+export type ComposeOptions = {
+  /** "today" draws from the whole day's cast regardless of the hour; the home pages want this. */
+  window?: PosterField["window"];
+  /**
+   * At most this many bird blocks; the rest go to the more block. A long
+   * day's cast then comes as a few blocks big enough for photographs rather
+   * than a sea of swatches. Blocks already on the field are kept in
+   * preference, so the boundary does not flicker.
+   */
+  maxBirds?: number;
+};
+
+const KEEP_BONUS = 1.15;
+
+function capCandidates(candidates: Candidate[], maxBirds: number | undefined, history: History): { kept: Candidate[]; dropped: string[] } {
+  if (!maxBirds || candidates.length <= maxBirds) return { kept: candidates, dropped: [] };
+  const rank = (candidate: Candidate) =>
+    (candidate.hero ? Number.MAX_SAFE_INTEGER : 0) + candidate.weight * (history.areas.has(nameOf(candidate)) ? KEEP_BONUS : 1);
+  const ranked = [...candidates].sort((left, right) => rank(right) - rank(left) || left.age - right.age);
+  const keep = new Set(ranked.slice(0, maxBirds).map(nameOf));
+  return {
+    kept: candidates.filter((candidate) => keep.has(nameOf(candidate))),
+    dropped: ranked.slice(maxBirds).map(nameOf),
+  };
+}
+
 export function composeField(
   snapshot: FrameSnapshot | null,
   now: number,
   previous: PosterField | null,
+  options: ComposeOptions = {},
 ): PosterField {
-  if (!snapshot) return { window: "hour", blocks: [] };
-  const { window, voices } = candidatesFor(snapshot, now);
+  if (!snapshot) return { window: options.window ?? "hour", blocks: [] };
+  const { window, voices } = candidatesFor(snapshot, now, options.window);
   const hero = heroName(snapshot, voices);
   const candidates: Candidate[] = voices.map((voice) => ({
     ...voice,
@@ -465,7 +495,8 @@ export function composeField(
   for (const block of previous?.blocks ?? []) {
     if (block.kind === "bird") previousCells.set(block.key, block.area.cols * block.area.rows);
   }
-  const { sized, more } = allocateCells(candidates, previousCells, inPlaceGrowth(voices, history));
+  const { kept, dropped } = capCandidates(candidates, options.maxBirds, history);
+  const { sized, more } = allocateCells(kept, previousCells, inPlaceGrowth(voices, history), dropped);
   const { placed, order, overflow } = place(sized, history);
 
   const grid = new Grid();

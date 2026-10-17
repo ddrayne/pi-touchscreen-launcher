@@ -408,6 +408,23 @@ export function castFor(snapshot: FrameSnapshot | null): FrameSpecies[] {
     seen.add(species.commonName);
     cast.push(species);
   }
+  // A bird heard this hour, or the very latest call, belongs to today even
+  // when the day's list has not caught up with it yet.
+  for (const species of snapshot.species) {
+    if (seen.has(species.commonName)) continue;
+    seen.add(species.commonName);
+    cast.push(species);
+  }
+  const latest = snapshot.latest;
+  if (latest && !seen.has(latest.commonName)) {
+    cast.unshift({
+      commonName: latest.commonName,
+      scientificName: latest.scientificName,
+      count: 1,
+      tier: latest.tier,
+      lastHeard: latest.at,
+    });
+  }
   return cast;
 }
 

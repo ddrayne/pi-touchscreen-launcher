@@ -264,3 +264,30 @@ test("describeField draws the grid one character per cell", async () => {
   assert.equal(lines.length, FIELD_ROWS);
   for (const line of lines) assert.equal(line.length, FIELD_COLS);
 });
+
+test("the today window can be forced on a loud hour", () => {
+  const snapshot = loudSnapshot();
+  const field = composeField(snapshot, LOUD_NOW, null, { window: "today" });
+  assert.equal(field.window, "today");
+  const birds = field.blocks.filter((block) => block.kind === "bird");
+  assert.ok(birds.length > 0);
+  const more = field.blocks.find((block) => block.kind === "more");
+  assert.ok(more, "fifty-one species do not fit; the rest are in the more block");
+  assert.equal(birds.length + more.names.length, snapshot.todaySpeciesCount);
+});
+
+test("a cap on bird blocks keeps the hero, sends the rest to more, and holds steady", () => {
+  const snapshot = loudSnapshot();
+  const first = composeField(snapshot, LOUD_NOW, null, { window: "today", maxBirds: 14 });
+  const birds = first.blocks.filter((block) => block.kind === "bird");
+  assert.equal(birds.length, 14);
+  assert.ok(birds.some((block) => block.hero), "the hero survives the cap");
+  const more = first.blocks.find((block) => block.kind === "more");
+  assert.equal(birds.length + more.names.length, snapshot.todaySpeciesCount);
+  assertTiled(first);
+  const second = composeField(snapshot, LOUD_NOW + 15_000, first, { window: "today", maxBirds: 14 });
+  assert.deepEqual(
+    second.blocks.filter((block) => block.kind === "bird").map((block) => block.key).sort(),
+    birds.map((block) => block.key).sort(),
+  );
+});

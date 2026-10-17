@@ -22,6 +22,8 @@ const SCENES = [
   { name: "winter-noon", scene: "winter", at: "2026-12-21T12:10:00", wait: 7_000 },
   { name: "home-loud", scene: "loud", at: "2026-10-17T15:48:00", wait: 4_000, query: "&mode=home" },
   { name: "night-home", scene: "night", at: "2026-10-06T23:20:00", wait: 3_000, query: "&mode=home" },
+  { name: "household", scene: "loud", at: "2026-10-17T15:48:00", wait: 4_000, query: "&mode=home&page=household" },
+  { name: "night-household", scene: "night", at: "2026-10-06T23:20:00", wait: 3_000, query: "&mode=home&page=household" },
 ];
 
 const TIMEZONE = process.env.FRAME_TZ || "Europe/London";

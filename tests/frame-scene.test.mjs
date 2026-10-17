@@ -108,6 +108,15 @@ test("quiet and cast come from the snapshot", async () => {
   assert.equal(cast[0].commonName, "Eurasian Blackbird");
 });
 
+test("the cast takes in the latest call when today's list has not caught up", async () => {
+  const snapshot = parseSnapshot(await fixture("now-morning.json"), RECEIVED, await fixture("today-morning.json"));
+  const owl = { ...snapshot.latest, id: snapshot.latest.id + 1, commonName: "Tawny Owl", scientificName: "Strix aluco", at: RECEIVED + 60_000 };
+  const cast = castFor({ ...snapshot, latest: owl });
+  assert.equal(cast.length, 10);
+  assert.equal(cast[0].commonName, "Tawny Owl");
+  assert.equal(cast[0].lastHeard, RECEIVED + 60_000);
+});
+
 test("weather becomes a mood and absence is a still sky", () => {
   assert.equal(weatherMood(null).rain, 0);
   const rain = weatherMood({ condition: "pouring", temperature: 7, windSpeed: 36, windSpeedUnit: "km/h", windBearing: 270 }, 180);

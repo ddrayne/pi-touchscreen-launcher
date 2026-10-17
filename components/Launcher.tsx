@@ -21,7 +21,11 @@ import {
 import { useFrameClock, withFrameTime } from "../lib/frame/clock";
 import { readJson, settle } from "../lib/http";
 import { watchWake } from "../lib/wake";
-import { todayTiles } from "../lib/frame/birds";
+import { agendaFor } from "../lib/frame/agenda";
+import { groundPalette } from "../lib/frame/palette";
+import { composeField, type PosterField } from "../lib/frame/poster";
+import type { FrameSnapshot } from "../lib/frame/scene";
+import { parseForecast } from "../lib/frame/weather";
 import {
   DEFAULT_FRAME_CONFIG,
   loadFrameConfig,
@@ -29,18 +33,24 @@ import {
 } from "../lib/frame/config";
 import { gardenContext } from "../lib/frame/context";
 import { usePortraits } from "../lib/frame/portraits";
-import { tierWord } from "../lib/frame/scene";
 import {
+  daylightLabel,
   sunIsRising,
   sunPosition,
+  sunTimes,
   skyPalette,
 } from "../lib/frame/solar";
 import { useBirdframeStream } from "../lib/frame/stream";
 import { useBirdVoices } from "../lib/frame/voices";
 import { Frame, typeInkFor, type FrameMode } from "./frame/Frame";
-import { TodayBirds } from "./TodayBirds";
+import { HouseholdPage } from "./home/HouseholdPage";
+import { VoicePage } from "./home/VoicePage";
 
 const FRAME_WIDTH = 1200;
+const EMPTY_TODAY: PosterField = { window: "today", blocks: [] };
+/** Today's birds on Home: enough blocks for photographs, the rest behind "more". */
+const HOME_MAX_BIRDS = 14;
+const NO_KEYS: ReadonlySet<string> = new Set();
 const FRAME_HEIGHT = 1920;
 const HOME_IDLE_MS = 90_000;
 /** A failed conversation shows its reason, then lets the wake word back in. */
@@ -55,28 +65,17 @@ const CLOCK_FORMAT = new Intl.DateTimeFormat("en-GB", {
   minute: "2-digit",
   hour12: false,
 });
-const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  weekday: "long",
-  day: "numeric",
-  month: "long",
-});
-const EVENT_DAY_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-});
-const EVENT_TIME_FORMAT = new Intl.DateTimeFormat("en-GB", {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-});
 
 function initialMode(): FrameMode {
   if (typeof window === "undefined") return "frame";
   const requested = new URLSearchParams(window.location.search).get("mode");
   return requested === "home" || requested === "conversation" ? requested : "frame";
+}
+
+/** `?page=household` opens Home on the Household page, for screenshots. */
+function initialHubPage(): 0 | 1 {
+  if (typeof window === "undefined") return 0;
+  return new URLSearchParams(window.location.search).get("page") === "household" ? 1 : 0;
 }
 
 function greetingFor(at: number): string {
@@ -96,29 +95,6 @@ type ApplianceStatus = {
   wakeReady?: boolean;
   shoppingReady?: boolean;
 };
-
-function VoiceTranscriptText({ entry }: { entry: VoiceConversationEntry }) {
-  const settledLength =
-    entry.streaming && typeof entry.revealFrom === "number"
-      ? Math.min(entry.text.length, Math.max(0, entry.revealFrom))
-      : entry.text.length;
-  const settled = entry.text.slice(0, settledLength);
-  const arriving = entry.text.slice(settledLength);
-
-  return (
-    <span className="assistant__utterance-copy">
-      {settled}
-      {arriving ? (
-        <span
-          className="assistant__stream-chunk"
-          key={`${entry.text.length}:${arriving}`}
-        >
-          {arriving}
-        </span>
-      ) : null}
-    </span>
-  );
-}
 
 type ShoppingItem = {
   id: string;
@@ -380,28 +356,6 @@ function timeAgo(seconds: number | undefined): string {
   return `heard ${hours} ${hours === 1 ? "hour" : "hours"} ago`;
 }
 
-function formatClock(now: Date): string {
-  return CLOCK_FORMAT.format(now);
-}
-
-function formatDate(now: Date): string {
-  return DATE_FORMAT.format(now);
-}
-
-function weatherSymbol(condition: string | undefined): string {
-  if (!condition) return "○";
-  if (condition.includes("lightning")) return "ϟ";
-  if (condition.includes("rain") || condition.includes("pour")) return "☂";
-  if (condition.includes("snow") || condition.includes("hail")) return "✣";
-  if (condition.includes("cloud") || condition.includes("fog")) return "☁";
-  if (condition.includes("sun") || condition.includes("clear")) return "☀";
-  return "○";
-}
-
-function formatHubEventStart(start: string, allDay: boolean): string {
-  const date = new Date(allDay ? `${start}T12:00:00` : start);
-  return (allDay ? EVENT_DAY_FORMAT : EVENT_TIME_FORMAT).format(date);
-}
 
 export function Launcher() {
   const [status, setStatus] = useState<ApplianceStatus>({});
@@ -411,7 +365,7 @@ export function Launcher() {
   const frameNow = useFrameClock(1000);
   const stream = useBirdframeStream();
   const [householdHub, setHouseholdHub] = useState<HouseholdHub | null>(null);
-  const [hubPage, setHubPage] = useState<0 | 1>(0);
+  const [hubPage, setHubPage] = useState<0 | 1>(initialHubPage);
   const [hubBusy, setHubBusy] = useState<string | null>(null);
   const [voiceState, setVoiceState] = useState<InlineVoiceStatus>("idle");
   const [voiceDetail, setVoiceDetail] = useState<string | null>(null);
@@ -1345,7 +1299,6 @@ export function Launcher() {
     [hubBusy],
   );
 
-  const now = new Date(frameNow);
   const snapshot = stream.snapshot;
   const hubWeather = householdHub?.weather ?? null;
   useEffect(() => {
@@ -1357,33 +1310,69 @@ export function Launcher() {
   const homeSky = useMemo(() => {
     const sun = sunPosition(skyTick, frameConfig.latitude, frameConfig.longitude);
     const rising = sunIsRising(skyTick, frameConfig.latitude, frameConfig.longitude);
-    const darkness = skyPalette(sun.elevation, rising).darkness;
+    const sky = skyPalette(sun.elevation, rising);
+    const ground = groundPalette(sky, rising);
     return {
-      night: darkness > 0.3,
-      style: { "--home-type-rgb": typeInkFor(darkness).join(" ") } as CSSProperties,
+      night: sky.darkness > 0.3,
+      ground,
+      daylight: daylightLabel(skyTick, sunTimes(skyTick, frameConfig.latitude, frameConfig.longitude)),
+      style: {
+        "--home-type-rgb": typeInkFor(sky.darkness).join(" "),
+        "--frame-type-rgb": ground.type.join(" "),
+        "--frame-paper-rgb": ground.paper.join(" "),
+        "--frame-paper-deep-rgb": ground.paperDeep.join(" "),
+        "--frame-gold-rgb": ground.gold.join(" "),
+      } as CSSProperties,
     };
   }, [skyTick, frameConfig.latitude, frameConfig.longitude]);
 
+  // Today's birds as a field on the poster's grid, recomposed every fifteen
+  // seconds from the last field so blocks grow in place. The previous field
+  // is state adjusted during render.
   const tilesTick = Math.floor(frameNow / 15_000) * 15_000;
-  const birdTiles = useMemo(() => todayTiles(snapshot, tilesTick), [snapshot, tilesTick]);
-  const latestScientificName = snapshot?.latest?.scientificName;
-  const birdPortraitNames = useMemo(() => {
-    const names = birdTiles.tiles.map((tile) => tile.species.scientificName).filter(Boolean);
-    if (latestScientificName) names.push(latestScientificName);
-    return names;
-  }, [birdTiles, latestScientificName]);
-  const birdPortraits = usePortraits(birdPortraitNames);
+  const [todayField, setTodayField] = useState<{
+    snapshot: FrameSnapshot | null;
+    tick: number;
+    field: PosterField;
+    keys: Set<string>;
+    born: ReadonlySet<string>;
+  }>({ snapshot: null, tick: 0, field: EMPTY_TODAY, keys: new Set(), born: NO_KEYS });
+  if (todayField.snapshot !== snapshot || todayField.tick !== tilesTick) {
+    const next = composeField(snapshot, tilesTick, todayField.field, { window: "today", maxBirds: HOME_MAX_BIRDS });
+    const keys = new Set(next.blocks.map((block) => block.key));
+    const born = new Set<string>();
+    if (todayField.tick) for (const key of keys) if (!todayField.keys.has(key)) born.add(key);
+    setTodayField({ snapshot, tick: tilesTick, field: next, keys, born });
+  }
   const latestCall = snapshot?.latest ?? null;
+  const latestScientificName = latestCall?.scientificName;
+  const birdPortraitNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const block of todayField.field.blocks) {
+      if (block.kind === "bird" && block.species.scientificName) names.add(block.species.scientificName);
+    }
+    if (latestScientificName) names.add(latestScientificName);
+    return [...names];
+  }, [todayField.field, latestScientificName]);
+  const birdPortraits = usePortraits(birdPortraitNames);
+  const [homeArrivals, setHomeArrivals] = useState<ReadonlyMap<string, number>>(new Map());
+  if (latestCall && homeArrivals.get(latestCall.commonName) !== latestCall.id) {
+    const map = new Map(homeArrivals);
+    map.set(latestCall.commonName, latestCall.id);
+    setHomeArrivals(map);
+  }
   const latestAgoSeconds = latestCall
     ? Math.max(0, Math.round((frameNow - latestCall.at) / 1000))
     : undefined;
-  const newToday = snapshot?.newToday ?? [];
   const todayCount = snapshot?.todaySpeciesCount ?? 0;
-  const hearLatest = () => {
-    if (latestCall) voices.hear(latestCall.commonName, latestCall.clipUrl);
-  };
-  const playingLatest = latestCall !== null && voices.playing === latestCall.commonName;
-  const latestPortrait = latestCall ? birdPortraits.get(latestCall.scientificName) ?? null : null;
+  const latestBlock = useMemo(() => {
+    const name = latestCall?.commonName;
+    if (!name) return null;
+    const block = todayField.field.blocks.find((entry) => entry.kind === "bird" && entry.key === name);
+    return block && block.kind === "bird" ? block : null;
+  }, [todayField.field, latestCall?.commonName]);
+  const agenda = useMemo(() => agendaFor(householdHub?.events, skyTick, 7), [householdHub?.events, skyTick]);
+  const forecast = useMemo(() => parseForecast(householdHub?.forecast), [householdHub?.forecast]);
   const activeShoppingItems = shopping.items.filter((item) => !item.completed);
   const completedShoppingItems = shopping.items.filter((item) => item.completed);
   const activeShoppingGroups = shoppingCategoryOrder.flatMap((category) => {
@@ -1397,6 +1386,21 @@ export function Launcher() {
   const latestName =
     latestCall?.commonName ||
     (stream.reachable ? "The garden is quiet" : "The garden is listening");
+  const shoppingProps = {
+    count: shopping.activeCount,
+    items: activeShoppingItems,
+    loaded: shoppingLoaded,
+    offline: status.shoppingReady === false || !shoppingOnline,
+    busy: shoppingBusy !== null,
+    onOpen: () => openShopping(),
+    onAdd: () => openShopping(true),
+    onToggle: (item: { id: string }) => {
+      const full = shopping.items.find((entry) => entry.id === item.id);
+      if (full) void toggleShoppingItem(full);
+    },
+  };
+  const openJournal = () => void openBirdframe();
+  const toggleRoom = (entityId: string) => void toggleHouseholdControl(entityId);
   const gatewayReady = status.gatewayReady === true;
   const voiceReady = status.voiceReady === true;
   const birdframeReady = status.birdframeReady !== false;
@@ -1412,9 +1416,6 @@ export function Launcher() {
             : voiceState === "error"
               ? "I couldn’t start the conversation."
               : "What would you like to know?";
-  const orbStyle = {
-    "--voice-level": String(Math.max(0.04, inputLevel)),
-  } as CSSProperties;
   const renderShoppingRow = (item: ShoppingItem) => (
     <div
       className="shopping-sheet__row"
@@ -1523,316 +1524,80 @@ export function Launcher() {
           Household
         </button>
       </nav>
-      {hubPage === 0 ? (
-        <div className="launcher__frame">
-        <header className="launcher__masthead">
-          <div>
-            <p className="launcher__eyebrow">{frameConfig.place} · home</p>
-            <h1 className="launcher__place">{greetingFor(frameNow)}</h1>
-          </div>
-          <div className="launcher__clock">
-            <time className="launcher__time">{formatClock(now)}</time>
-            <span className="launcher__date">{formatDate(now)}</span>
-          </div>
-        </header>
-
-        <section
-          className="assistant"
-          data-active={voiceActive}
-          aria-labelledby="assistant-prompt"
-        >
-          <button
-            className="assistant__orb-button"
-            data-state={voiceState}
-            type="button"
-            onClick={toggleVoice}
-            aria-label={voiceActive ? "End voice conversation" : "Start voice conversation"}
-            style={orbStyle}
-          >
-            <span className="assistant__ring" />
-            <span className="assistant__ring assistant__ring--middle" />
-            <span className="assistant__ring assistant__ring--inner" />
-            <span className="assistant__orb" />
-          </button>
-          <h2 className="assistant__prompt" id="assistant-prompt">
-            {assistantPrompt}
-          </h2>
-          {conversation.length ? (
-            <div
-              className="assistant__conversation"
-              aria-live="polite"
-              aria-label="Voice conversation"
-            >
-              {conversation.slice(-4).map((entry) => (
-                <p
-                  className="assistant__utterance"
-                  data-role={entry.role}
-                  data-streaming={entry.streaming}
-                  key={entry.id}
-                >
-                  <span className="assistant__speaker">
-                    {entry.role === "user" ? "You" : "Assistant"}
-                  </span>
-                  <VoiceTranscriptText entry={entry} />
-                </p>
-              ))}
-            </div>
-          ) : (
-            <p className="assistant__hint">
-              {voiceState === "error"
-                ? voiceDetail ||
-                  "End this conversation, then touch the light again to retry."
-                : status.wakeReady
-                  ? "Say “Computer” or touch the listening light to talk."
-                  : "Touch the listening light to talk."}
-            </p>
-          )}
-          {voiceActive ? (
-            <button type="button" className="assistant__end" onClick={stopVoice}>
-              End conversation
-            </button>
-          ) : null}
-          <div className="assistant__status">
-            <span className="status-dot" data-ready={gatewayReady && voiceReady} />
-            {voiceActive
-              ? voiceDetail || "Voice is live"
-              : gatewayReady && voiceReady
-                ? "OpenClaw voice is ready"
-                : "Connecting to OpenClaw"}
-          </div>
-        </section>
-
-        <section className="launcher__lower" aria-label="Home applications">
-          <div className="bird-card__wrap">
-            <button
-              type="button"
-              className="bird-card"
-              onClick={openBirdframe}
-              disabled={!birdframeReady}
-            >
-              <span className="bird-card__open">Open journal →</span>
-              <p className="bird-card__eyebrow">
-                {newToday.length
-                  ? `New to this garden · ${newToday.join(", ")}`
-                  : stream.reachable
-                    ? "Live from BirdFrame"
-                    : "BirdFrame unreachable"}
-              </p>
-              <h2 className="bird-card__title">{latestName}</h2>
-              <p className="bird-card__meta">
-                {timeAgo(latestAgoSeconds)}
-                {latestCall?.tier ? ` · ${tierWord(latestCall.tier)}` : ""}
-                {todayCount ? ` · ${todayCount} voices today` : ""}
-              </p>
-              {latestPortrait ? (
-                <span
-                  className="bird-card__portrait"
-                  style={{ backgroundImage: `url("${latestPortrait.image}")` }}
-                  aria-hidden="true"
-                />
-              ) : null}
-            </button>
-            {latestCall?.clipUrl ? (
-              <button
-                type="button"
-                className="bird-card__hear"
-                onClick={hearLatest}
-                aria-pressed={playingLatest}
-              >
-                {playingLatest ? "Stop" : "Hear it"}
-              </button>
-            ) : null}
-          </div>
-
-          <div className="launcher__side">
-            <section
-              className="shopping-card"
-              data-ready={status.shoppingReady !== false && shoppingLoaded}
-              aria-labelledby="shopping-card-title"
-            >
-              <button
-                type="button"
-                className="shopping-card__header"
-                onClick={() => openShopping()}
-              >
-                <span>
-                  <span className="shopping-card__eyebrow">House shopping</span>
-                  <strong id="shopping-card-title">
-                    {shoppingLoaded
-                      ? `${shopping.activeCount} ${
-                          shopping.activeCount === 1 ? "item" : "items"
-                        }`
-                      : "Loading…"}
-                  </strong>
-                </span>
-                <span className="shopping-card__open" aria-hidden="true">
-                  →
-                </span>
-              </button>
-              <div className="shopping-card__items">
-                {activeShoppingItems.length ? (
-                  activeShoppingItems.slice(0, 3).map((item) => (
-                    <button
-                      type="button"
-                      className="shopping-card__item"
-                      key={item.id}
-                      disabled={shoppingBusy !== null}
-                      onClick={() => void toggleShoppingItem(item)}
-                    >
-                      <span className="shopping-card__check" aria-hidden="true" />
-                      <span>{item.text}</span>
-                    </button>
-                  ))
-                ) : (
-                  <button
-                    type="button"
-                    className="shopping-card__empty"
-                    onClick={() => openShopping(true)}
-                  >
-                    {shoppingError && shopping.items.length === 0
-                      ? "List unavailable · tap to retry"
-                      : "Nothing to buy · add an item"}
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                className="shopping-card__add"
-                onClick={() => openShopping(true)}
-              >
-                + Add item
-              </button>
-            </section>
-            <button
-              type="button"
-              className="launcher__action launcher__action--wide"
-              onClick={openCamera}
-            >
-              <span className="launcher__action-icon">◉</span>
-              <span className="launcher__action-label">Look</span>
-            </button>
-          </div>
-        </section>
-
-        <TodayBirds
-          tiles={birdTiles.tiles}
-          more={birdTiles.more}
-          portraits={birdPortraits}
-          playing={voices.playing}
-          newest={latestCall?.commonName ?? null}
-          reachable={stream.reachable}
-          lastHeardAt={latestCall?.at ?? null}
-          onHear={voices.hear}
-          onOpenJournal={openBirdframe}
-        />
-        </div>
-      ) : (
-        <section className="household-page" aria-label="Household hub">
-          <header className="household-page__header">
-            <div>
-              <p className="launcher__eyebrow">Household · live</p>
-              <h1>Today at home</h1>
-            </div>
-            <div className="household-weather">
-              <span aria-hidden="true">
-                {weatherSymbol(householdHub?.weather?.condition)}
-              </span>
-              <div>
-                <strong>
-                  {householdHub?.weather?.temperature ?? "–"}
-                  {householdHub?.weather?.unit || "°C"}
-                </strong>
-                <small>
-                  {householdHub?.weather?.condition.replaceAll("-", " ") ||
-                    "Weather loading"}
-                </small>
-              </div>
-            </div>
-          </header>
-
-          <div className="household-page__grid">
-            <section className="household-panel household-panel--agenda">
-              <header>
-                <p>Coming up</p>
-                <span>{formatDate(now)}</span>
-              </header>
-              {householdHub?.events.length ? (
-                <ol>
-                  {householdHub.events.slice(0, 6).map((event) => (
-                    <li key={`${event.calendar}-${event.start}-${event.summary}`}>
-                      <time>{formatHubEventStart(event.start, event.allDay)}</time>
-                      <strong>{event.summary}</strong>
-                    </li>
-                  ))}
-                </ol>
-              ) : (
-                <p className="household-panel__empty">
-                  No shared household events in the next week.
-                </p>
-              )}
-            </section>
-
-            <section className="household-panel household-panel--controls">
-              <header>
-                <p>Rooms</p>
-                <span>Home Assistant</span>
-              </header>
-              <div>
-                {householdHub?.controls.map((control) => (
-                  <button
-                    type="button"
-                    key={control.entityId}
-                    data-active={control.active}
-                    disabled={hubBusy !== null}
-                    onClick={() => void toggleHouseholdControl(control.entityId)}
-                  >
-                    <span aria-hidden="true" />
-                    <strong>{control.name}</strong>
-                    <small>
-                      {hubBusy === control.entityId
-                        ? "Updating…"
-                        : control.active
-                          ? "On"
-                          : "Off"}
-                    </small>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            <button
-              type="button"
-              className="household-panel household-panel--shopping"
-              onClick={() => openShopping()}
-            >
-              <span>House shopping</span>
-              <strong>
-                {shopping.activeCount}{" "}
-                {shopping.activeCount === 1 ? "thing" : "things"} to pick up
-              </strong>
-              <small>
-                {activeShoppingItems
-                  .slice(0, 4)
-                  .map((item) => item.text)
-                  .join(" · ") || "The list is clear"}
-              </small>
-              <i aria-hidden="true">→</i>
-            </button>
-
-            <button
-              type="button"
-              className="household-panel household-panel--birds"
-              onClick={openBirdframe}
-              disabled={!birdframeReady}
-            >
-              <span>Garden right now</span>
-              <strong>{latestName}</strong>
-              <small>{timeAgo(latestAgoSeconds)}</small>
-              <i aria-hidden="true">Open BirdFrame →</i>
-            </button>
-          </div>
-        </section>
-      )}
+      <div className="home-stage">
+        {hubPage === 0 ? (
+          <VoicePage
+            now={frameNow}
+            minuteTick={skyTick}
+            voice={{
+              place: frameConfig.place,
+              greeting: greetingFor(frameNow),
+              state: voiceState,
+              active: voiceActive,
+              prompt: assistantPrompt,
+              hint:
+                voiceState === "error"
+                  ? voiceDetail || "End this conversation, then touch the light again to retry."
+                  : status.wakeReady
+                    ? "Say “Computer” or touch the listening light to talk."
+                    : "Touch the listening light to talk.",
+              conversation,
+              inputLevel,
+              ready: gatewayReady && voiceReady,
+              statusLabel: voiceActive
+                ? voiceDetail || "Voice is live"
+                : gatewayReady && voiceReady
+                  ? "OpenClaw voice is ready"
+                  : "Connecting to OpenClaw",
+              onToggle: toggleVoice,
+              onEnd: stopVoice,
+            }}
+            field={todayField.field}
+            bornKeys={todayField.born}
+            arrivals={homeArrivals}
+            portraits={birdPortraits}
+            ground={homeSky.ground}
+            playing={voices.playing}
+            onHear={voices.hear}
+            shopping={shoppingProps}
+            todayCount={todayCount}
+            reachable={stream.reachable}
+            journalReady={birdframeReady}
+            onOpenJournal={openJournal}
+            onOpenCamera={openCamera}
+          />
+        ) : (
+          <HouseholdPage
+            now={frameNow}
+            minuteTick={skyTick}
+            place={frameConfig.place}
+            daylight={homeSky.daylight}
+            agenda={agenda}
+            controls={householdHub?.controls ?? []}
+            hubBusy={hubBusy}
+            onToggleControl={toggleRoom}
+            shopping={shoppingProps}
+            garden={{
+              block: latestBlock,
+              portrait: latestScientificName ? (birdPortraits.get(latestScientificName) ?? null) : null,
+              title: latestName,
+              meta: timeAgo(latestAgoSeconds),
+              painting: voices.day?.artwork ?? null,
+              night: homeSky.night,
+            }}
+            ground={homeSky.ground}
+            playing={voices.playing}
+            onHear={voices.hear}
+            weather={householdHub?.weather ?? null}
+            forecast={forecast}
+            todayCount={todayCount}
+            reachable={stream.reachable}
+            journalReady={birdframeReady}
+            onOpenJournal={openJournal}
+            onOpenCamera={openCamera}
+          />
+        )}
+      </div>
       </>
       )}
 
