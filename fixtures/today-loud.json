@@ -1,0 +1,362 @@
+{
+  "date": "2026-10-17",
+  "species": [
+    {
+      "common_name": "Eurasian Blackbird",
+      "scientific_name": "Turdus merula",
+      "count": 18,
+      "tier": "confirmed",
+      "last_heard": "15:47:36"
+    },
+    {
+      "common_name": "European Robin",
+      "scientific_name": "Erithacus rubecula",
+      "count": 112,
+      "tier": "confirmed",
+      "last_heard": "15:46:12"
+    },
+    {
+      "common_name": "Dunnock",
+      "scientific_name": "Prunella modularis",
+      "count": 21,
+      "tier": "confirmed",
+      "last_heard": "15:44:34"
+    },
+    {
+      "common_name": "Common Kingfisher",
+      "scientific_name": "Alcedo atthis",
+      "count": 1,
+      "tier": "tentative",
+      "last_heard": "15:44:08"
+    },
+    {
+      "common_name": "Eurasian Wren",
+      "scientific_name": "Troglodytes troglodytes",
+      "count": 34,
+      "tier": "confirmed",
+      "last_heard": "15:40:48"
+    },
+    {
+      "common_name": "Eurasian Linnet",
+      "scientific_name": "Linaria cannabina",
+      "count": 5,
+      "tier": "confirmed",
+      "last_heard": "15:38:56"
+    },
+    {
+      "common_name": "Ring-necked Pheasant",
+      "scientific_name": "Phasianus colchicus",
+      "count": 4,
+      "tier": "probable",
+      "last_heard": "15:37:40"
+    },
+    {
+      "common_name": "Common Greenshank",
+      "scientific_name": "Tringa nebularia",
+      "count": 1,
+      "tier": "tentative",
+      "last_heard": "15:36:45"
+    },
+    {
+      "common_name": "Eurasian Coot",
+      "scientific_name": "Fulica atra",
+      "count": 2,
+      "tier": "probable",
+      "last_heard": "15:34:49"
+    },
+    {
+      "common_name": "Common Buzzard",
+      "scientific_name": "Buteo buteo",
+      "count": 3,
+      "tier": "probable",
+      "last_heard": "15:32:44"
+    },
+    {
+      "common_name": "Common Raven",
+      "scientific_name": "Corvus corax",
+      "count": 1,
+      "tier": "tentative",
+      "last_heard": "15:32:21"
+    },
+    {
+      "common_name": "Redwing",
+      "scientific_name": "Turdus iliacus",
+      "count": 22,
+      "tier": "confirmed",
+      "last_heard": "15:30:55"
+    },
+    {
+      "common_name": "Eurasian Magpie",
+      "scientific_name": "Pica pica",
+      "count": 9,
+      "tier": "confirmed",
+      "last_heard": "15:21:17"
+    },
+    {
+      "common_name": "Goldcrest",
+      "scientific_name": "Regulus regulus",
+      "count": 11,
+      "tier": "probable",
+      "last_heard": "15:05:42"
+    },
+    {
+      "common_name": "European Goldfinch",
+      "scientific_name": "Carduelis carduelis",
+      "count": 19,
+      "tier": "confirmed",
+      "last_heard": "14:52:30"
+    },
+    {
+      "common_name": "Eurasian Blue Tit",
+      "scientific_name": "Cyanistes caeruleus",
+      "count": 27,
+      "tier": "confirmed",
+      "last_heard": "14:47:12"
+    },
+    {
+      "common_name": "Great Tit",
+      "scientific_name": "Parus major",
+      "count": 31,
+      "tier": "confirmed",
+      "last_heard": "14:40:05"
+    },
+    {
+      "common_name": "House Sparrow",
+      "scientific_name": "Passer domesticus",
+      "count": 44,
+      "tier": "confirmed",
+      "last_heard": "14:31:48"
+    },
+    {
+      "common_name": "Common Wood Pigeon",
+      "scientific_name": "Columba palumbus",
+      "count": 23,
+      "tier": "confirmed",
+      "last_heard": "14:25:16"
+    },
+    {
+      "common_name": "Common Starling",
+      "scientific_name": "Sturnus vulgaris",
+      "count": 16,
+      "tier": "confirmed",
+      "last_heard": "14:18:59"
+    },
+    {
+      "common_name": "Common Chaffinch",
+      "scientific_name": "Fringilla coelebs",
+      "count": 14,
+      "tier": "confirmed",
+      "last_heard": "14:09:21"
+    },
+    {
+      "common_name": "European Greenfinch",
+      "scientific_name": "Chloris chloris",
+      "count": 6,
+      "tier": "probable",
+      "last_heard": "13:57:44"
+    },
+    {
+      "common_name": "Grey Heron",
+      "scientific_name": "Ardea cinerea",
+      "count": 2,
+      "tier": "confirmed",
+      "last_heard": "13:44:08"
+    },
+    {
+      "common_name": "Herring Gull",
+      "scientific_name": "Larus argentatus",
+      "count": 11,
+      "tier": "confirmed",
+      "last_heard": "13:36:52"
+    },
+    {
+      "common_name": "Tawny Owl",
+      "scientific_name": "Strix aluco",
+      "count": 2,
+      "tier": "confirmed",
+      "last_heard": "05:12:40"
+    },
+    {
+      "common_name": "Eurasian Jay",
+      "scientific_name": "Garrulus glandarius",
+      "count": 3,
+      "tier": "probable",
+      "last_heard": "13:21:07"
+    },
+    {
+      "common_name": "Carrion Crow",
+      "scientific_name": "Corvus corone",
+      "count": 9,
+      "tier": "confirmed",
+      "last_heard": "13:08:33"
+    },
+    {
+      "common_name": "Eurasian Jackdaw",
+      "scientific_name": "Corvus monedula",
+      "count": 13,
+      "tier": "confirmed",
+      "last_heard": "12:55:19"
+    },
+    {
+      "common_name": "Coal Tit",
+      "scientific_name": "Periparus ater",
+      "count": 7,
+      "tier": "confirmed",
+      "last_heard": "12:41:26"
+    },
+    {
+      "common_name": "Long-tailed Tit",
+      "scientific_name": "Aegithalos caudatus",
+      "count": 8,
+      "tier": "confirmed",
+      "last_heard": "12:30:02"
+    },
+    {
+      "common_name": "Eurasian Blackcap",
+      "scientific_name": "Sylvia atricapilla",
+      "count": 2,
+      "tier": "probable",
+      "last_heard": "12:14:47"
+    },
+    {
+      "common_name": "Common Chiffchaff",
+      "scientific_name": "Phylloscopus collybita",
+      "count": 3,
+      "tier": "probable",
+      "last_heard": "11:58:13"
+    },
+    {
+      "common_name": "White Wagtail",
+      "scientific_name": "Motacilla alba",
+      "count": 4,
+      "tier": "confirmed",
+      "last_heard": "11:46:39"
+    },
+    {
+      "common_name": "Meadow Pipit",
+      "scientific_name": "Anthus pratensis",
+      "count": 5,
+      "tier": "probable",
+      "last_heard": "11:32:54"
+    },
+    {
+      "common_name": "Song Thrush",
+      "scientific_name": "Turdus philomelos",
+      "count": 6,
+      "tier": "confirmed",
+      "last_heard": "11:20:08"
+    },
+    {
+      "common_name": "Fieldfare",
+      "scientific_name": "Turdus pilaris",
+      "count": 4,
+      "tier": "probable",
+      "last_heard": "11:04:31"
+    },
+    {
+      "common_name": "Eurasian Curlew",
+      "scientific_name": "Numenius arquata",
+      "count": 3,
+      "tier": "confirmed",
+      "last_heard": "10:49:17"
+    },
+    {
+      "common_name": "Eurasian Oystercatcher",
+      "scientific_name": "Haematopus ostralegus",
+      "count": 2,
+      "tier": "probable",
+      "last_heard": "10:37:45"
+    },
+    {
+      "common_name": "Northern Lapwing",
+      "scientific_name": "Vanellus vanellus",
+      "count": 1,
+      "tier": "tentative",
+      "last_heard": "10:22:09"
+    },
+    {
+      "common_name": "Common Snipe",
+      "scientific_name": "Gallinago gallinago",
+      "count": 1,
+      "tier": "tentative",
+      "last_heard": "06:41:28"
+    },
+    {
+      "common_name": "Mallard",
+      "scientific_name": "Anas platyrhynchos",
+      "count": 4,
+      "tier": "confirmed",
+      "last_heard": "10:08:36"
+    },
+    {
+      "common_name": "Canada Goose",
+      "scientific_name": "Branta canadensis",
+      "count": 5,
+      "tier": "confirmed",
+      "last_heard": "09:51:14"
+    },
+    {
+      "common_name": "Mute Swan",
+      "scientific_name": "Cygnus olor",
+      "count": 1,
+      "tier": "tentative",
+      "last_heard": "09:38:50"
+    },
+    {
+      "common_name": "Common Gull",
+      "scientific_name": "Larus canus",
+      "count": 3,
+      "tier": "probable",
+      "last_heard": "09:24:22"
+    },
+    {
+      "common_name": "Black-headed Gull",
+      "scientific_name": "Chroicocephalus ridibundus",
+      "count": 7,
+      "tier": "confirmed",
+      "last_heard": "09:11:05"
+    },
+    {
+      "common_name": "Eurasian Sparrowhawk",
+      "scientific_name": "Accipiter nisus",
+      "count": 1,
+      "tier": "tentative",
+      "last_heard": "08:57:41"
+    },
+    {
+      "common_name": "Common Kestrel",
+      "scientific_name": "Falco tinnunculus",
+      "count": 1,
+      "tier": "probable",
+      "last_heard": "08:43:18"
+    },
+    {
+      "common_name": "Great Spotted Woodpecker",
+      "scientific_name": "Dendrocopos major",
+      "count": 3,
+      "tier": "confirmed",
+      "last_heard": "08:29:56"
+    },
+    {
+      "common_name": "European Green Woodpecker",
+      "scientific_name": "Picus viridis",
+      "count": 2,
+      "tier": "probable",
+      "last_heard": "08:12:33"
+    },
+    {
+      "common_name": "Eurasian Collared Dove",
+      "scientific_name": "Streptopelia decaocto",
+      "count": 6,
+      "tier": "confirmed",
+      "last_heard": "07:58:09"
+    },
+    {
+      "common_name": "Eurasian Bullfinch",
+      "scientific_name": "Pyrrhula pyrrhula",
+      "count": 2,
+      "tier": "probable",
+      "last_heard": "07:36:47"
+    }
+  ]
+}

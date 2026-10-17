@@ -414,3 +414,20 @@ export function starField(count: number, seed = 7): Star[] {
   }
   return stars;
 }
+
+/**
+ * The stars that are bright on a given twinkle tick: a few, chosen by the
+ * tick alone, so every frame of the sky can be reproduced and the compositor
+ * draws only when the set changes.
+ */
+export function twinkleSet(tick: number, count: number, size: number): Set<number> {
+  const bright = new Set<number>();
+  if (count <= 0 || size <= 0) return bright;
+  let state = (Math.floor(tick) * 2_654_435_761) >>> 0;
+  const wanted = Math.min(size, count);
+  while (bright.size < wanted) {
+    state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+    bright.add(state % count);
+  }
+  return bright;
+}

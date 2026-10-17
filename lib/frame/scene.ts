@@ -408,7 +408,35 @@ export function castFor(snapshot: FrameSnapshot | null): FrameSpecies[] {
     seen.add(species.commonName);
     cast.push(species);
   }
+  // A bird heard this hour, or the very latest call, belongs to today even
+  // when the day's list has not caught up with it yet.
+  for (const species of snapshot.species) {
+    if (seen.has(species.commonName)) continue;
+    seen.add(species.commonName);
+    cast.push(species);
+  }
+  const latest = snapshot.latest;
+  if (latest && !seen.has(latest.commonName)) {
+    cast.unshift({
+      commonName: latest.commonName,
+      scientificName: latest.scientificName,
+      count: 1,
+      tier: latest.tier ?? "tentative",
+      lastHeard: latest.at,
+    });
+  }
   return cast;
+}
+
+/** How long ago a call was, in the poster's words: minutes while they are few, then hours. */
+export function agoWord(ageMs: number): string {
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes === 1) return "a minute ago";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours === 1) return minutes < 90 ? "an hour ago" : "an hour and a half ago";
+  return `${hours} h ago`;
 }
 
 export function tierWord(tier: Tier | undefined): string {

@@ -9,7 +9,54 @@ export type Portrait = {
   artist: string;
   license: string;
   source: string;
+  /** The photo's dominant colour, for the block it sits in; null before the bridge has computed it. */
+  tint: [number, number, number] | null;
+  /** Where the bird is, as fractions of the frame; null when unknown. */
+  focal: { x: number; y: number } | null;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function channel(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 255) return null;
+  return Math.round(value);
+}
+
+export function parseTint(raw: unknown): Portrait["tint"] {
+  if (!Array.isArray(raw) || raw.length !== 3) return null;
+  const [r, g, b] = raw.map(channel);
+  if (r === null || g === null || b === null) return null;
+  return [r, g, b];
+}
+
+function fraction(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) return null;
+  return value;
+}
+
+export function parseFocal(raw: unknown): Portrait["focal"] {
+  if (!isRecord(raw)) return null;
+  const x = fraction(raw.x);
+  const y = fraction(raw.y);
+  if (x === null || y === null) return null;
+  return { x, y };
+}
+
+/** One bridge portrait record; null when it carries no image. */
+export function parsePortrait(raw: unknown, fallbackTitle = ""): Portrait | null {
+  if (!isRecord(raw) || typeof raw.image !== "string" || !raw.image) return null;
+  return {
+    image: raw.image,
+    title: typeof raw.title === "string" ? raw.title : fallbackTitle,
+    artist: typeof raw.artist === "string" ? raw.artist : "Wikimedia contributor",
+    license: typeof raw.license === "string" ? raw.license : "",
+    source: typeof raw.source === "string" ? raw.source : "",
+    tint: parseTint(raw.tint),
+    focal: parseFocal(raw.focal),
+  };
+}
 
 const cache = new Map<string, Portrait | null>();
 const pending = new Map<string, Promise<Portrait | null>>();
@@ -37,15 +84,7 @@ export function loadPortrait(scientificName: string): Promise<Portrait | null> {
         await discardBody(response);
         return null;
       }
-      const raw = (await response.json()) as Record<string, unknown>;
-      if (typeof raw.image !== "string" || !raw.image) return null;
-      return {
-        image: raw.image,
-        title: typeof raw.title === "string" ? raw.title : key,
-        artist: typeof raw.artist === "string" ? raw.artist : "Wikimedia contributor",
-        license: typeof raw.license === "string" ? raw.license : "",
-        source: typeof raw.source === "string" ? raw.source : "",
-      } satisfies Portrait;
+      return parsePortrait(await response.json(), key);
     })
     .catch(() => null)
     .then((portrait) => {

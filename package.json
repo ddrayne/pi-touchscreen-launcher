@@ -12,12 +12,13 @@
     "appliance:dev": "vite --config appliance/vite.config.ts",
     "appliance:build": "vite build --config appliance/vite.config.ts",
     "test": "npm run build && node --test tests/*.test.mjs && python3 -m unittest discover -s bridge -p 'test_*.py'",
-    "test:bridge": "python3 -m py_compile bridge/launcher_bridge.py bridge/launcher_watchdog.py bridge/wake_listener.py && python3 -m unittest discover -s bridge -p 'test_*.py'",
+    "test:bridge": "python3 -m py_compile bridge/launcher_bridge.py bridge/launcher_watchdog.py bridge/portrait_features.py bridge/wake_listener.py && python3 -m unittest discover -s bridge -p 'test_*.py'",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern dist-appliance --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "frame:mock": "node scripts/mock-bridge.mjs",
     "frame:shots": "node scripts/screenshot-frame.mjs",
-    "test:frame": "node --test tests/frame-*.test.mjs"
+    "test:frame": "node --test tests/frame-*.test.mjs",
+    "typecheck:frame": "NODE_OPTIONS=--max-old-space-size=6144 tsc -p tsconfig.frame.json"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.3.0",

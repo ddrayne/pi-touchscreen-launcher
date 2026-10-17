@@ -13,6 +13,7 @@ import {
   parseSnapshot,
   quietFor,
   rollCall,
+  agoWord,
 } from "../lib/frame/scene.ts";
 import { conditionWord, forecastDayLabel, parseForecast, weatherGlyph, weatherMood } from "../lib/frame/weather.ts";
 
@@ -108,6 +109,24 @@ test("quiet and cast come from the snapshot", async () => {
   assert.equal(cast[0].commonName, "Eurasian Blackbird");
 });
 
+test("the cast takes in the latest call when today's list has not caught up", async () => {
+  const snapshot = parseSnapshot(await fixture("now-morning.json"), RECEIVED, await fixture("today-morning.json"));
+  const owl = { ...snapshot.latest, id: snapshot.latest.id + 1, commonName: "Tawny Owl", scientificName: "Strix aluco", at: RECEIVED + 60_000 };
+  const cast = castFor({ ...snapshot, latest: owl });
+  assert.equal(cast.length, 10);
+  assert.equal(cast[0].commonName, "Tawny Owl");
+  assert.equal(cast[0].lastHeard, RECEIVED + 60_000);
+});
+
+test("a latest call without a tier joins the cast as tentative", async () => {
+  const snapshot = parseSnapshot(await fixture("now-morning.json"), RECEIVED, await fixture("today-morning.json"));
+  const untiered = { ...snapshot.latest, id: snapshot.latest.id + 1, commonName: "Tawny Owl" };
+  delete untiered.tier;
+  const cast = castFor({ ...snapshot, latest: untiered });
+  assert.equal(cast[0].commonName, "Tawny Owl");
+  assert.equal(cast[0].tier, "tentative");
+});
+
 test("weather becomes a mood and absence is a still sky", () => {
   assert.equal(weatherMood(null).rain, 0);
   const rain = weatherMood({ condition: "pouring", temperature: 7, windSpeed: 36, windSpeedUnit: "km/h", windBearing: 270 }, 180);
@@ -181,4 +200,15 @@ test("the forecast normalises both shapes and names the days", () => {
   assert.equal(weatherGlyph("sunny", true), "night");
   assert.equal(weatherGlyph("lightning-rainy"), "storm");
   assert.equal(conditionWord("snowy-rainy"), "Sleet");
+});
+
+test("agoWord says how long ago in minutes, then hours", () => {
+  assert.equal(agoWord(0), "just now");
+  assert.equal(agoWord(59_000), "just now");
+  assert.equal(agoWord(60_000), "a minute ago");
+  assert.equal(agoWord(12 * 60_000 + 5_000), "12 min ago");
+  assert.equal(agoWord(59 * 60_000), "59 min ago");
+  assert.equal(agoWord(60 * 60_000), "an hour ago");
+  assert.equal(agoWord(95 * 60_000), "an hour and a half ago");
+  assert.equal(agoWord(3 * 3_600_000 + 60_000), "3 h ago");
 });
