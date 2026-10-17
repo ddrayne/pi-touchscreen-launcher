@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": false, "plugins": [] },
+  "include": [
+    "lib/frame/**/*.ts",
+    "components/frame/**/*.ts",
+    "components/frame/**/*.tsx",
+    "components/home/**/*.tsx",
+    "components/Launcher.tsx"
+  ],
+  "exclude": ["node_modules"]
+}

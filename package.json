@@ -17,7 +17,8 @@
     "db:generate": "drizzle-kit generate",
     "frame:mock": "node scripts/mock-bridge.mjs",
     "frame:shots": "node scripts/screenshot-frame.mjs",
-    "test:frame": "node --test tests/frame-*.test.mjs"
+    "test:frame": "node --test tests/frame-*.test.mjs",
+    "typecheck:frame": "NODE_OPTIONS=--max-old-space-size=6144 tsc -p tsconfig.frame.json"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.3.0",

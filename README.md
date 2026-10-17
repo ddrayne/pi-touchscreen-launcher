@@ -163,7 +163,11 @@ npm run appliance:build
 npm run lint
 python3 -m py_compile bridge/launcher_bridge.py bridge/wake_listener.py
 npx tsc -p tsconfig.appliance.json --noEmit
+npm run typecheck:frame
 ```
+
+The last line type-checks the frame, the home pages and the launcher on
+their own; `tsc -p .` takes in every generated file and runs out of memory.
 
 Install and activate the Mac broker once:
 
