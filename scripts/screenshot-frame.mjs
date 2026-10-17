@@ -10,6 +10,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { createServer } from "node:net";
 import { chromium } from "playwright";
 
 const SCENES = [
@@ -38,6 +39,19 @@ const PORTRAITS =
 const wanted = process.argv.slice(2);
 const selected = wanted.length ? SCENES.filter((entry) => wanted.includes(entry.name)) : SCENES;
 
+/** The first free port at or above `from`, so a stray server on the box does not stop the run. */
+async function freePort(from) {
+  for (let port = from; port < from + 100; port += 1) {
+    const taken = await new Promise((resolve) => {
+      const probe = createServer();
+      probe.once("error", () => resolve(true));
+      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(false)));
+    });
+    if (!taken) return port;
+  }
+  throw new Error(`no free port above ${from}`);
+}
+
 async function waitForServer(port) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
@@ -55,7 +69,7 @@ await mkdir("outputs", { recursive: true });
 const browser = await chromium.launch();
 let port = 8780;
 for (const entry of selected) {
-  port += 1;
+  port = await freePort(port + 1);
   const mock = spawn(process.execPath, ["scripts/mock-bridge.mjs"], {
     env: { ...process.env, TZ: TIMEZONE, PORT: String(port), MOCK_SCENE: entry.scene, MOCK_ARTWORK: ARTWORK, MOCK_PORTRAITS_DIR: PORTRAITS },
     stdio: ["ignore", "inherit", "inherit"],

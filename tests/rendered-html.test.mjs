@@ -36,16 +36,17 @@ test("server-renders the touchscreen launcher", async () => {
   assert.match(html, /The (?:<!-- -->)?Edinburgh(?:<!-- -->)? window/);
   assert.match(html, /An impression of the last hour/);
   assert.match(html, /The journal is one tap away/);
-  assert.match(html, /frame-clock__time/);
-  assert.match(html, /frame-place__eyebrow/);
+  assert.match(html, /pb--clock/);
+  assert.match(html, /pb--status/);
   assert.doesNotMatch(html, /A quiet intelligence/);
   assert.doesNotMatch(html, /HA_TOKEN|Bearer\s+[A-Za-z0-9._-]+/);
 });
 
 test("keeps shopping writes behind the narrow broker boundary", async () => {
-  const [launcher, css, bridge, broker, skill] = await Promise.all([
+  const [launcher, css, home, bridge, broker, skill] = await Promise.all([
     readFile(new URL("../components/Launcher.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../components/home/home.css", import.meta.url), "utf8"),
     readFile(new URL("../bridge/launcher_bridge.py", import.meta.url), "utf8"),
     readFile(
       new URL("../broker/openclaw_voice_broker.ts", import.meta.url),
@@ -72,9 +73,9 @@ test("keeps shopping writes behind the narrow broker boundary", async () => {
   assert.match(launcher, /Household access & reminders/);
   assert.doesNotMatch(launcher, /HA_TOKEN|homeassistant\.local/);
 
-  assert.match(css, /\.shopping-card/);
+  assert.match(home, /\.pb--shopping/);
+  assert.match(home, /\.pb--rooms/);
   assert.match(css, /\.shopping-sheet/);
-  assert.match(css, /\.household-page/);
   assert.match(css, /\.camera-sheet__analysis/);
 
   assert.match(bridge, /"\/api\/shopping"/);
