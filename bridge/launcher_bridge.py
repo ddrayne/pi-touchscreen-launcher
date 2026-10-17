@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from launcher_watchdog import LauncherWatchdog
-from portrait_features import portrait_features
+from portrait_features import pillow_available, portrait_features
 
 
 HOST = os.environ.get("LAUNCHER_HOST", "127.0.0.1")
@@ -619,7 +619,14 @@ class PortraitCache:
             return self._fetch(scientific_name, meta_path, key)
 
     def _with_features(self, meta: dict[str, Any], meta_path: Path) -> dict[str, Any]:
-        """Add the tint and focal point to a portrait cached before they existed, once."""
+        """Add the tint and focal point to a portrait cached before they existed, once.
+
+        Without Pillow the meta is left exactly as it is, so a later run with
+        python3-pil installed still backfills it; only an image Pillow cannot
+        read is marked ``features_checked`` so it is not reopened every lookup.
+        """
+        if not pillow_available(log=lambda message: print(message, flush=True)):
+            return meta
         with self.lock:
             try:
                 fresh = json.loads(meta_path.read_text("utf-8"))
@@ -1558,6 +1565,7 @@ def main() -> None:
         f"(static root {STATIC_ROOT}, cache {CACHE_ROOT})",
         flush=True,
     )
+    pillow_available(log=lambda message: print(message, flush=True))
     WATCHER.start()
     threading.Thread(target=warm_portraits_from_census, name="census-warm", daemon=True).start()
     threading.Thread(target=run_watchdog, name="launcher-watchdog", daemon=True).start()

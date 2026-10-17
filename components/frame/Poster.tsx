@@ -4,14 +4,15 @@
  * play one FLIP transform; nothing runs while nothing happens.
  */
 
-import { memo, useRef, type CSSProperties } from "react";
+import { memo, useCallback, useRef } from "react";
 import type { AgendaItem } from "../../lib/frame/agenda.ts";
 import type { GroundPalette } from "../../lib/frame/palette.ts";
 import type { Portrait } from "../../lib/frame/portraits.ts";
-import type { PosterField } from "../../lib/frame/poster.ts";
+import { fieldVoices, type PosterField } from "../../lib/frame/poster.ts";
 import type { ForecastDay, HubWeather } from "../../lib/frame/weather.ts";
 import { BirdField, useFlip } from "./BirdField.tsx";
 import { AgendaBlock, ClockBlock, ForecastBlock, ListBlock, StatusBlock, WeatherBlock } from "./blocks.tsx";
+import { tapProps } from "./tap.ts";
 import "./poster.css";
 
 /** The birds start under two rows of house blocks. */
@@ -35,8 +36,7 @@ export type PosterProps = {
   place: string;
   daylight: string;
   reachable: boolean;
-  /** Species in the window and today, for the status block. */
-  hourCount: number;
+  /** Species today by the bridge's count, for the status block when the field shows today. */
   todayCount: number | null;
   quietMinutes: number | null;
   weather: HubWeather | null;
@@ -61,7 +61,6 @@ export const Poster = memo(function Poster({
   place,
   daylight,
   reachable,
-  hourCount,
   todayCount,
   quietMinutes,
   weather,
@@ -76,9 +75,10 @@ export const Poster = memo(function Poster({
   const root = useRef<HTMLDivElement | null>(null);
   useFlip(root, field);
 
-  const style = {
-    "--frame-paper-deep-rgb": ground.paperDeep.join(" "),
-  } as CSSProperties;
+  // One handler per block, stable across ticks, so the memoised blocks hold.
+  const openHousehold = useCallback(() => onOpenHousehold(), [onOpenHousehold]);
+  const openAgenda = useCallback(() => onOpenHousehold("agenda"), [onOpenHousehold]);
+  const openShopping = useCallback(() => onOpenHousehold("shopping"), [onOpenHousehold]);
 
   const countLabel = !reachable
     ? "unreachable"
@@ -87,12 +87,13 @@ export const Poster = memo(function Poster({
         ? `voices today · quiet ${quietMinutes} min`
         : "voices today"
       : "voices · last hour";
-  const count = field.window === "today" ? todayCount : hourCount;
+  // The hour's count is the field's own, so the number never disagrees with the blocks.
+  const count = field.window === "today" ? todayCount : fieldVoices(field);
 
   return (
-    <div className="poster" ref={root} style={style}>
-      <ClockBlock now={now} gridArea="1 / 1 / span 2 / span 3" onTap={() => onOpenHousehold()} />
-      <WeatherBlock weather={weather} night={night} gridArea="1 / 4 / span 2 / span 2" onTap={() => onOpenHousehold()} />
+    <div className="poster" ref={root}>
+      <ClockBlock now={now} gridArea="1 / 1 / span 2 / span 3" onTap={openHousehold} />
+      <WeatherBlock weather={weather} night={night} gridArea="1 / 4 / span 2 / span 2" onTap={openHousehold} />
       <StatusBlock place={place} daylight={daylight} count={count} countLabel={countLabel} gridArea="1 / 6 / span 2 / span 1" />
 
       <BirdField
@@ -108,21 +109,15 @@ export const Poster = memo(function Poster({
         onMore={onOpenJournal}
       />
 
-      <AgendaBlock items={agenda} gridArea="9 / 1 / span 1 / span 4" onTap={() => onOpenHousehold("agenda")} />
-      <ListBlock count={shoppingCount} gridArea="9 / 5 / span 1 / span 2" onTap={() => onOpenHousehold("shopping")} />
-      <ForecastBlock now={minuteTick} forecast={forecast} gridArea="10 / 1 / span 1 / span 6" onTap={() => onOpenHousehold()} />
+      <AgendaBlock items={agenda} gridArea="9 / 1 / span 1 / span 4" onTap={openAgenda} />
+      <ListBlock count={shoppingCount} gridArea="9 / 5 / span 1 / span 2" onTap={openShopping} />
+      <ForecastBlock now={minuteTick} forecast={forecast} gridArea="10 / 1 / span 1 / span 6" onTap={openHousehold} />
 
       <div className="poster-foot">
         <span>
           {field.window === "today" ? "An impression of today" : "An impression of the last hour"} · one dot is one call
         </span>
-        <button
-          type="button"
-          onPointerUp={(event) => {
-            event.stopPropagation();
-            onOpenJournal();
-          }}
-        >
+        <button type="button" {...tapProps(onOpenJournal)}>
           The journal is one tap away →
         </button>
       </div>

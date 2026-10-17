@@ -9,7 +9,7 @@
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   grid-template-rows: repeat(10, 1fr);
-  gap: var(--poster-gap, 16px);
+  gap: 16px;
   padding: 48px 48px 56px;
   font-family: "Newsreader Variable", Georgia, "Times New Roman", serif;
   color: rgb(var(--frame-type-rgb));
@@ -27,7 +27,6 @@
   background: rgb(var(--pb-tint-rgb, var(--frame-paper-rgb)));
   color: rgb(var(--pb-type-rgb, var(--frame-type-rgb)));
   cursor: pointer;
-  will-change: transform;
   transition:
     background-color 2s ease,
     color 2s ease,
@@ -35,12 +34,19 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.pb[data-flip] {
-  transition: none;
-}
-
 .pb--still {
   cursor: default;
+}
+
+/* Inside a button the type is spans; they still stack like paragraphs. */
+.pb__kicker,
+.pb__name,
+.pb__meta,
+.pb__label,
+.pb__count,
+.pb__title,
+.pb__line {
+  display: block;
 }
 
 /* House blocks sit on a shade of the paper so the eye separates them from the garden. */

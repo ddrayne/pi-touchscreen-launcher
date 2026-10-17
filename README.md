@@ -183,7 +183,7 @@ The Pi requires:
 
 ```bash
 sudo apt-get install -y \
-  chromium curl wlrctl pocketsphinx pocketsphinx-en-us pipewire-alsa
+  chromium curl wlrctl pocketsphinx pocketsphinx-en-us pipewire-alsa python3-pil
 ```
 
 Synchronize the repository to `/home/dan/touchscreen-launcher-src`, then run on

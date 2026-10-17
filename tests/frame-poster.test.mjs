@@ -7,10 +7,11 @@ import {
   describeField,
   FIELD_COLS,
   FIELD_ROWS,
+  fieldVoices,
   HERO_MIN_CELLS,
   MAX_SIDE,
 } from "../lib/frame/poster.ts";
-import { applyDetection, parseSnapshot } from "../lib/frame/scene.ts";
+import { applyDetection, inkFor, parseSnapshot } from "../lib/frame/scene.ts";
 
 async function fixture(name) {
   return JSON.parse(await readFile(new URL(`../fixtures/${name}`, import.meta.url), "utf8"));
@@ -225,7 +226,7 @@ test("when the hero grows it grows in place and most neighbours stay put", () =>
   assertTiled(next);
 });
 
-test("a newcomer opens as a single cell and at most one block makes room", () => {
+test("a newcomer opens small, into the room at most one block makes for it", () => {
   const snapshot = loudSnapshot();
   const previous = composeField(snapshot, LOUD_NOW, null);
   const goldcrest = {
@@ -242,15 +243,62 @@ test("a newcomer opens as a single cell and at most one block makes room", () =>
   );
   const before = areasByName(previous);
   const after = areasByName(next);
-  const newcomer = after.get("Goldcrest");
-  assert.deepEqual([newcomer.cols, newcomer.rows], [1, 1]);
   const resized = [...before.keys()].filter((name) => cellsOf(after.get(name)) !== cellsOf(before.get(name)));
   assert.ok(resized.length <= 1, `resized: ${resized.join(", ")}`);
+  const freed = resized.reduce((sum, name) => sum + cellsOf(before.get(name)) - cellsOf(after.get(name)), 0);
+  assert.ok(freed >= 1, "the one block that changes makes room by shrinking");
+  const newcomer = after.get("Goldcrest");
+  assert.ok(cellsOf(newcomer) <= freed, `the newcomer's ${cellsOf(newcomer)} cells fit the ${freed} made for it`);
   for (const name of before.keys()) {
     if (resized.includes(name)) continue;
     assert.deepEqual(after.get(name), before.get(name), `${name} keeps its area`);
   }
+  assert.equal(next.blocks.filter((block) => block.kind === "ground").length, 0, "nothing is left for the next tick to absorb");
   assertTiled(next);
+});
+
+test("a newcomer hero opens at full size and the field then holds still without an event", () => {
+  const snapshot = loudSnapshot();
+  const first = composeField(snapshot, LOUD_NOW, null);
+  const arrival = LOUD_NOW + 30_000;
+  const goldcrest = {
+    id: 10_500,
+    commonName: "Goldcrest",
+    scientificName: "Regulus regulus",
+    confidence: 0.9,
+    at: arrival - 5_000,
+    seenAt: arrival - 5_000,
+    tier: "probable",
+  };
+  const arrived = applyDetection(snapshot, goldcrest);
+  const second = composeField(arrived, arrival, first);
+  const hero = birds(second).find((block) => block.hero);
+  assert.equal(hero.key, "Goldcrest");
+  assert.ok(
+    cellsOf(hero.area) >= HERO_MIN_CELLS,
+    `the newcomer hero has ${cellsOf(hero.area)} cells\n${describeField(first)}\n\n${describeField(second)}`,
+  );
+  assertTiled(second);
+  const third = composeField(arrived, arrival + 15_000, second);
+  assert.deepEqual(
+    [...areasByName(third)],
+    [...areasByName(second)],
+    `blocks moved with no event behind it\n${describeField(second)}\n\n${describeField(third)}`,
+  );
+  assertTiled(third);
+});
+
+test("birds dropped by a cap leave no ground: their neighbours grow into the cells", () => {
+  const snapshot = loudSnapshot();
+  const first = composeField(snapshot, LOUD_NOW, null);
+  const second = composeField(snapshot, LOUD_NOW + 15_000, first, { maxBirds: 10 });
+  assert.equal(birds(second).length, 10);
+  assert.equal(second.blocks.find((block) => block.kind === "more").names.length, 4);
+  const ground = second.blocks.filter((block) => block.kind === "ground");
+  assert.equal(ground.length, 0, `ground left behind\n${describeField(first)}\n\n${describeField(second)}`);
+  const before = areasByName(first);
+  for (const block of birds(second)) assert.ok(sameOrigin(block.area, before.get(block.key)), `${block.key} kept its origin`);
+  assertTiled(second);
 });
 
 test("the loud field leaves little ground", () => {
@@ -274,6 +322,20 @@ test("the today window can be forced on a loud hour", () => {
   const more = field.blocks.find((block) => block.kind === "more");
   assert.ok(more, "fifty-one species do not fit; the rest are in the more block");
   assert.equal(birds.length + more.names.length, snapshot.todaySpeciesCount);
+});
+
+test("fieldVoices counts every voice the field was composed from, capped or not", () => {
+  const snapshot = loudSnapshot();
+  const heard = snapshot.species.filter(
+    (species) => species.lastHeard !== undefined && inkFor(species.lastHeard, LOUD_NOW, snapshot.windowMinutes) > 0,
+  ).length;
+  assert.equal(heard, LOUD.length, "every loud species is still within the hour");
+  assert.equal(fieldVoices(composeField(snapshot, LOUD_NOW, null)), heard);
+  const capped = composeField(snapshot, LOUD_NOW, null, { maxBirds: 6 });
+  assert.equal(birds(capped).length, 6);
+  assert.equal(fieldVoices(capped), heard, "capped birds are counted through the more block");
+  assert.equal(fieldVoices(composeField(snapshot, LOUD_NOW, null, { window: "today" })), snapshot.todaySpeciesCount);
+  assert.equal(fieldVoices({ window: "hour", blocks: [] }), 0);
 });
 
 test("a cap on bird blocks keeps the hero, sends the rest to more, and holds steady", () => {

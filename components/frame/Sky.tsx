@@ -2,6 +2,13 @@
  * The sky: a continuous palette keyed to the sun, the sun on its real arc,
  * the moon with its true lit limb, a star field that is the same every
  * night, clouds that drift with the wind, rain as ink hatching, and fog.
+ *
+ * Nothing here moves smoothly. On the Pi one smooth animation anywhere,
+ * however small, has the compositor redraw the whole layered sky every
+ * frame (a third of the machine); a stepped one costs only its steps. So
+ * the stars twinkle in a few steps on a slow tick, the clouds and the rain
+ * advance in steps, and the sun and moon jump the fraction of a pixel they
+ * move in five seconds.
  */
 
 import { memo, useMemo, type CSSProperties } from "react";
@@ -9,6 +16,7 @@ import type { WeatherMood } from "../../lib/frame/weather.ts";
 import {
   projectToSky,
   starField,
+  twinkleSet,
   type MoonIllumination,
   type SkyPalette,
   type SkyPosition,
@@ -19,6 +27,8 @@ const FRAME_HEIGHT = 1920;
 export const SKY_HORIZON = 0.6;
 
 type SkyProps = {
+  /** The five-second tick the sky is drawn on. */
+  tick: number;
   palette: SkyPalette;
   sun: SkyPosition;
   moon: SkyPosition;
@@ -28,8 +38,14 @@ type SkyProps = {
 };
 
 const STARS = starField(120, 11);
-/** Every third star twinkles; they live outside the SVG so the compositor animates them alone. */
+/** Every third star twinkles; they live outside the SVG so each is its own small layer. */
 const TWINKLES = STARS.filter((_, index) => index % 3 === 0);
+/** How often the bright stars change, and how many are bright at once. */
+const TWINKLE_MS = 10_000;
+const TWINKLE_BRIGHT = 6;
+/** A cloud moves in steps this far apart in time; the drift between is not drawn. */
+const CLOUD_STEP_S = 3;
+const CLOUD_DRIFT_S = 260;
 
 /** The lit part of the moon as an SVG path, for a disc of radius r at (cx, cy). */
 function moonLitPath(cx: number, cy: number, r: number, phase: number): string {
@@ -57,7 +73,7 @@ const CLOUDS = [
   { top: 430, width: 400, height: 110, factor: 1.32, delay: 0.33 },
 ];
 
-export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, facing }: SkyProps) {
+export const Sky = memo(function Sky({ tick, palette, sun, moon, illumination, mood, facing }: SkyProps) {
   const sunSpot = projectToSky(sun, { facing, horizon: SKY_HORIZON });
   const moonSpot = projectToSky(moon, { facing, horizon: SKY_HORIZON });
   const sunLow = 1 - Math.min(1, Math.max(0, sun.elevation / 25));
@@ -70,10 +86,12 @@ export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, f
   // thread all day for nothing. Stars exist only once the sky is dark enough.
   const starOpacity = palette.stars * (1 - mood.cloud * 0.85);
   const starsVisible = starOpacity > 0.02;
+  const twinkleTick = Math.floor(tick / TWINKLE_MS);
+  const bright = useMemo(() => twinkleSet(twinkleTick, TWINKLES.length, TWINKLE_BRIGHT), [twinkleTick]);
   const cloudStyle = {
-    "--frame-wind": String(mood.wind),
     "--frame-wind-direction": String(mood.windDirection),
   } as CSSProperties;
+  const windRate = 0.18 + mood.wind * 1.4;
 
   return (
     <>
@@ -105,13 +123,13 @@ export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, f
             <i
               key={index}
               className="frame-twinkle"
+              data-bright={bright.has(index)}
               style={{
                 left: star.x * FRAME_WIDTH - star.size,
                 top: star.y * FRAME_HEIGHT - star.size,
                 width: star.size * 2,
                 height: star.size * 2,
-                "--delay": `${-star.twinkle * 9}s`,
-              } as CSSProperties}
+              }}
             />
           ))}
         </div>
@@ -144,20 +162,24 @@ export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, f
         </svg>
       ) : null}
       <div className="frame-clouds" style={cloudStyle}>
-        {CLOUDS.slice(0, cloudCount).map((cloud, index) => (
-          <div
-            key={index}
-            className="frame-cloud"
-            style={{
-              top: cloud.top,
-              width: cloud.width,
-              height: cloud.height,
-              opacity: 0.45 + mood.cloud * 0.5,
-              "--cloud-factor": String(cloud.factor),
-              "--cloud-delay": String(cloud.delay),
-            } as CSSProperties}
-          />
-        ))}
+        {CLOUDS.slice(0, cloudCount).map((cloud, index) => {
+          const driftS = (cloud.factor * CLOUD_DRIFT_S) / windRate;
+          return (
+            <div
+              key={index}
+              className="frame-cloud"
+              style={{
+                top: cloud.top,
+                width: cloud.width,
+                height: cloud.height,
+                opacity: 0.45 + mood.cloud * 0.5,
+                "--cloud-drift": `${driftS.toFixed(1)}s`,
+                "--cloud-steps": String(Math.max(1, Math.round(driftS / CLOUD_STEP_S))),
+                "--cloud-delay": `${(-cloud.delay * driftS).toFixed(1)}s`,
+              } as CSSProperties}
+            />
+          );
+        })}
       </div>
       {mood.rain > 0 || mood.snow > 0 ? (
         <div className="frame-rain" style={{ opacity: mood.rain * 0.26 + mood.snow * 0.3 }} data-snow={mood.snow > 0}>

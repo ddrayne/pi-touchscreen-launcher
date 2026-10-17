@@ -54,7 +54,9 @@ export function useFlip(container: RefObject<HTMLDivElement | null>, field: Post
     const root = container.current;
     if (!root) return;
     const scale = root.getBoundingClientRect().width / FRAME_WIDTH || 1;
+    // Every read first, then every write, so the layout is measured once.
     const next = new Map<string, DOMRect>();
+    const moves: { element: HTMLElement; dx: number; dy: number; sx: number; sy: number }[] = [];
     for (const element of root.querySelectorAll<HTMLElement>("[data-key]")) {
       const key = element.dataset.key;
       if (!key) continue;
@@ -67,20 +69,37 @@ export function useFlip(container: RefObject<HTMLDivElement | null>, field: Post
       const sx = previous.width / box.width;
       const sy = previous.height / box.height;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) continue;
-      element.style.transition = "none";
-      element.style.transformOrigin = "top left";
-      element.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
-      void element.offsetWidth;
-      element.style.transition = `transform ${FLIP_MS}ms ${FLIP_EASE}`;
-      element.style.transform = "";
-      const settle = () => {
-        element.style.transition = "";
-        element.style.transformOrigin = "";
-        element.removeEventListener("transitionend", settle);
-      };
-      element.addEventListener("transitionend", settle);
+      moves.push({ element, dx, dy, sx, sy });
     }
     boxes.current = next;
+    if (!moves.length) return;
+    for (const { element, dx, dy, sx, sy } of moves) {
+      element.style.transition = "none";
+      element.style.transformOrigin = "top left";
+      element.style.willChange = "transform";
+      element.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`;
+    }
+    void root.offsetWidth;
+    for (const { element } of moves) {
+      element.style.transition = `transform ${FLIP_MS}ms ${FLIP_EASE}`;
+      element.style.transform = "";
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(fallback);
+        element.removeEventListener("transitionend", onEnd);
+        element.style.transition = "";
+        element.style.transformOrigin = "";
+        element.style.willChange = "";
+      };
+      const onEnd = (event: TransitionEvent) => {
+        if (event.target === element && event.propertyName === "transform") settle();
+      };
+      // A block hidden before its transition ends never fires transitionend.
+      const fallback = window.setTimeout(settle, FLIP_MS + 100);
+      element.addEventListener("transitionend", onEnd);
+    }
   }, [container, field]);
 }
 

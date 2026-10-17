@@ -7,6 +7,7 @@ import {
   projectToSky,
   skyPalette,
   starField,
+  twinkleSet,
   sunPosition,
   sunTimes,
 } from "../lib/frame/solar.ts";
@@ -85,4 +86,14 @@ test("the star field is the same every night", () => {
   const second = starField(40, 3);
   assert.deepEqual(first, second);
   assert.ok(first.every((star) => star.x >= 0 && star.x <= 1 && star.y >= 0 && star.y <= 0.75));
+});
+
+test("the bright stars are a few, chosen by the tick alone, and change between ticks", () => {
+  const first = twinkleSet(1234, 40, 6);
+  assert.equal(first.size, 6);
+  for (const index of first) assert.ok(index >= 0 && index < 40);
+  assert.deepEqual([...first].sort(), [...twinkleSet(1234, 40, 6)].sort());
+  assert.notDeepEqual([...first].sort(), [...twinkleSet(1235, 40, 6)].sort());
+  assert.equal(twinkleSet(7, 3, 6).size, 3);
+  assert.equal(twinkleSet(7, 0, 6).size, 0);
 });

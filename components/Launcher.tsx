@@ -1326,10 +1326,10 @@ export function Launcher() {
     };
   }, [skyTick, frameConfig.latitude, frameConfig.longitude]);
 
-  // Today's birds as a field on the poster's grid, recomposed every fifteen
-  // seconds from the last field so blocks grow in place. The previous field
-  // is state adjusted during render.
-  const tilesTick = Math.floor(frameNow / 15_000) * 15_000;
+  // Today's birds as a field on the poster's grid, recomposed when the
+  // snapshot changes and otherwise once a minute, from the last field so
+  // blocks grow in place. The previous field is state adjusted during render.
+  const tilesTick = skyTick;
   const [todayField, setTodayField] = useState<{
     snapshot: FrameSnapshot | null;
     tick: number;

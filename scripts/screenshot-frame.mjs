@@ -10,7 +10,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { createServer } from "node:net";
+import { connect } from "node:net";
 import { chromium } from "playwright";
 
 const SCENES = [
@@ -39,13 +39,18 @@ const PORTRAITS =
 const wanted = process.argv.slice(2);
 const selected = wanted.length ? SCENES.filter((entry) => wanted.includes(entry.name)) : SCENES;
 
-/** The first free port at or above `from`, so a stray server on the box does not stop the run. */
+/**
+ * The first free port at or above `from`, so a stray server on the box does
+ * not stop the run. Probed by connecting: a bind probe on 127.0.0.1 passes
+ * a server that listens on every interface.
+ */
 async function freePort(from) {
   for (let port = from; port < from + 100; port += 1) {
     const taken = await new Promise((resolve) => {
-      const probe = createServer();
-      probe.once("error", () => resolve(true));
-      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(false)));
+      const probe = connect({ port, host: "127.0.0.1" });
+      probe.once("connect", () => probe.destroy(new Error("taken")));
+      probe.once("error", (error) => resolve(error.message === "taken"));
+      probe.once("close", () => resolve(false));
     });
     if (!taken) return port;
   }

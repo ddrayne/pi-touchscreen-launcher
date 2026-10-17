@@ -5,11 +5,15 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from portrait_features import backfill, portrait_features
+import portrait_features as features_module
+from portrait_features import backfill, focal_point, pillow_available, portrait_features
 
 try:
     from PIL import Image, ImageDraw
@@ -88,6 +92,14 @@ class PortraitFeatureTests(unittest.TestCase):
         self.assertIsNone(portrait_features(b"not an image at all"))
         self.assertIsNone(portrait_features(b""))
 
+    def test_the_focal_point_reads_the_resampling_constant_from_an_old_pillow_too(self) -> None:
+        rgb = Image.open(io.BytesIO(grey_with_red_square())).convert("RGB")
+        old_style = types.SimpleNamespace(BOX=Image.Resampling.BOX)  # Pillow < 9 had Image.BOX and no Resampling
+        self.assertEqual(focal_point(rgb, old_style), focal_point(rgb, Image))
+
+    def test_pillow_is_reported_available(self) -> None:
+        self.assertTrue(pillow_available())
+
     def test_backfill_fills_meta_that_lacks_a_tint_and_leaves_the_rest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -112,6 +124,37 @@ class PortraitFeatureTests(unittest.TestCase):
             self.assertTrue(lines[1].startswith("done.json: tint "))
             self.assertGreater(json.loads((root / "done.json").read_text("utf-8"))["tint"][0], 150)
             self.assertEqual(lines[2:], ["gone.json: skipped", "missing.json: skipped"])
+
+
+class WithoutPillowTests(unittest.TestCase):
+    """Whatever the machine has, these run as if Pillow could not be imported."""
+
+    def setUp(self) -> None:
+        patcher = mock.patch.dict(sys.modules, {"PIL": None, "PIL.Image": None})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        warned = mock.patch.object(features_module, "_pillow_warned", False)
+        warned.start()
+        self.addCleanup(warned.stop)
+
+    def test_missing_pillow_gives_no_features(self) -> None:
+        self.assertIsNone(portrait_features(b"\x89PNG\r\n\x1a\n"))
+
+    def test_missing_pillow_is_reported_and_logged_once(self) -> None:
+        logged: list[str] = []
+        self.assertFalse(pillow_available(log=logged.append))
+        self.assertFalse(pillow_available(log=logged.append))
+        self.assertEqual(len(logged), 1, logged)
+        self.assertIn("python3-pil", logged[0])
+
+    def test_backfill_leaves_every_meta_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "bird.jpg").write_bytes(b"\x89PNG\r\n\x1a\n")
+            original = json.dumps({"file": "bird.jpg", "title": "Bird"})
+            (root / "bird.json").write_text(original, "utf-8")
+            self.assertEqual(backfill(root), ["bird.json: skipped"])
+            self.assertEqual((root / "bird.json").read_text("utf-8"), original)
 
 
 if __name__ == "__main__":

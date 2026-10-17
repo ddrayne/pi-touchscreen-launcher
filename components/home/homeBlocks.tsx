@@ -4,16 +4,12 @@
  * painting of the day. They share the poster's `.pb` base and palette.
  */
 
-import { memo, type CSSProperties, type PointerEvent } from "react";
+import { memo, type CSSProperties } from "react";
 import type { AgendaItem } from "../../lib/frame/agenda.ts";
 import type { InlineVoiceStatus } from "../../lib/realtimeVoice.ts";
 import type { VoiceConversationEntry } from "../../lib/voiceConversation.ts";
 import { clockOf, dateOf } from "../frame/blocks.tsx";
-
-function stop(event: PointerEvent, action: () => void): void {
-  event.stopPropagation();
-  action();
-}
+import { tapProps } from "../frame/tap.ts";
 
 /* Voice ------------------------------------------------------------------- */
 
@@ -89,7 +85,7 @@ export const VoiceBlock = memo(function VoiceBlock({
           className="assistant__orb-button"
           data-state={state}
           type="button"
-          onPointerUp={(event) => stop(event, onToggle)}
+          {...tapProps(onToggle)}
           aria-label={active ? "End voice conversation" : "Start voice conversation"}
           style={orbStyle}
         >
@@ -116,7 +112,7 @@ export const VoiceBlock = memo(function VoiceBlock({
             <span className="status-dot" data-ready={ready} />
             {statusLabel}
             {active ? (
-              <button type="button" className="pb__end" onPointerUp={(event) => stop(event, onEnd)}>
+              <button type="button" className="pb__end" {...tapProps(onEnd)}>
                 End conversation
               </button>
             ) : null}
@@ -166,36 +162,36 @@ export const ShoppingBlock = memo(function ShoppingBlock({
   const label = `House list${offline ? " · offline" : ""}`;
   if (rows === 1) {
     return (
-      <button type="button" className="pb pb--house pb--shopping" style={{ gridArea }} onPointerUp={(event) => stop(event, onOpen)}>
-        <p className="pb__label">{label}</p>
-        <p className="pb__count">
+      <button type="button" className="pb pb--house pb--shopping" style={{ gridArea }} {...tapProps(onOpen)}>
+        <span className="pb__label">{label}</span>
+        <span className="pb__count">
           {loaded && count > 0 ? <strong>{count}</strong> : null}
           {countLine(count, loaded)}
-        </p>
-        <p className="pb__line">{items.slice(0, 5).map((item) => item.text).join(" · ")}</p>
+        </span>
+        <span className="pb__line">{items.slice(0, 5).map((item) => item.text).join(" · ")}</span>
       </button>
     );
   }
   return (
     <div className="pb pb--house pb--shopping pb--still" data-tall="true" style={{ gridArea }}>
-      <button type="button" className="pb__open" onPointerUp={(event) => stop(event, onOpen)} aria-label="Open the house list">
-        <p className="pb__label">{label}</p>
-        <p className="pb__count">
+      <button type="button" className="pb__open" {...tapProps(onOpen)} aria-label="Open the house list">
+        <span className="pb__label">{label}</span>
+        <span className="pb__count">
           {loaded && count > 0 ? <strong>{count}</strong> : null}
           {countLine(count, loaded)}
-        </p>
+        </span>
       </button>
       <ul className="pb__rows">
         {items.slice(0, 5).map((item) => (
           <li key={item.id}>
-            <button type="button" className="pb__row" disabled={busy} onPointerUp={(event) => stop(event, () => onToggle(item))}>
+            <button type="button" className="pb__row" disabled={busy} {...tapProps(() => onToggle(item))}>
               <span className="pb__check" aria-hidden="true" />
               <span>{item.text}</span>
             </button>
           </li>
         ))}
       </ul>
-      <button type="button" className="pb__add" onPointerUp={(event) => stop(event, onAdd)}>
+      <button type="button" className="pb__add" {...tapProps(onAdd)}>
         + Add item
       </button>
     </div>
@@ -206,7 +202,7 @@ export const ShoppingBlock = memo(function ShoppingBlock({
 
 export const LookBlock = memo(function LookBlock({ onTap, gridArea }: { onTap: () => void; gridArea: string }) {
   return (
-    <button type="button" className="pb pb--house pb--look" style={{ gridArea }} onPointerUp={(event) => stop(event, onTap)} aria-label="Look through the camera">
+    <button type="button" className="pb pb--house pb--look" style={{ gridArea }} {...tapProps(onTap)} aria-label="Look through the camera">
       <span className="pb__eye" aria-hidden="true">
         ◉
       </span>
@@ -230,9 +226,9 @@ export const JournalBlock = memo(function JournalBlock({
 }) {
   const line = !reachable ? "BirdFrame unreachable" : count ? `${count} ${count === 1 ? "voice" : "voices"} today` : "Listening";
   return (
-    <button type="button" className="pb pb--house pb--journal" style={{ gridArea }} disabled={!ready} onPointerUp={(event) => stop(event, onTap)}>
-      <p className="pb__label">The journal</p>
-      <p className="pb__title">{line}</p>
+    <button type="button" className="pb pb--house pb--journal" style={{ gridArea }} disabled={!ready} {...tapProps(onTap)}>
+      <span className="pb__label">The journal</span>
+      <span className="pb__title">{line}</span>
       <span className="pb__go" aria-hidden="true">
         Open →
       </span>
@@ -294,7 +290,7 @@ export const RoomsBlock = memo(function RoomsBlock({
                 data-active={control.active}
                 disabled={busy !== null}
                 aria-pressed={control.active}
-                onPointerUp={(event) => stop(event, () => onToggle(control.entityId))}
+                {...tapProps(() => onToggle(control.entityId))}
               >
                 <span className="pb__check" aria-hidden="true" />
                 <span className="pb__room-name">{control.name}</span>
@@ -321,12 +317,12 @@ export const PaintingBlock = memo(function PaintingBlock({ image, onTap, gridAre
       data-wide="true"
       style={{ gridArea }}
       aria-label="Today’s painting; open the journal"
-      onPointerUp={(event) => stop(event, onTap)}
+      {...tapProps(onTap)}
     >
       <span className="pb__photo" style={{ backgroundImage: `url("${image}")` }} aria-hidden="true" />
       <span className="pb__shade" aria-hidden="true" />
       <span className="pb__text">
-        <h2 className="pb__name">Today’s painting</h2>
+        <span className="pb__name">Today’s painting</span>
       </span>
     </button>
   );
@@ -347,9 +343,9 @@ export const NoteBlock = memo(function NoteBlock({
 }) {
   const content = (
     <>
-      <p className="pb__label">{label}</p>
-      <p className="pb__title">{title}</p>
-      {meta ? <p className="pb__meta">{meta}</p> : null}
+      <span className="pb__label">{label}</span>
+      <span className="pb__title">{title}</span>
+      {meta ? <span className="pb__meta">{meta}</span> : null}
     </>
   );
   if (!onTap) {
@@ -360,7 +356,7 @@ export const NoteBlock = memo(function NoteBlock({
     );
   }
   return (
-    <button type="button" className="pb pb--house pb--note" style={{ gridArea }} onPointerUp={(event) => stop(event, onTap)}>
+    <button type="button" className="pb pb--house pb--note" style={{ gridArea }} {...tapProps(onTap)}>
       {content}
     </button>
   );

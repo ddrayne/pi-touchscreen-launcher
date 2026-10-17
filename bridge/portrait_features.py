@@ -3,8 +3,10 @@
 
 The poster frame crops each portrait hard into a block of colour, so it
 needs the photo's dominant colour and a hint of where the bird is. Both
-are computed once with Pillow when the portrait is cached; without Pillow
-(or with an unreadable image) there are simply no features.
+are computed once with Pillow when the portrait is cached. Without Pillow
+there are no features yet: nothing is marked, so a later run with
+``python3-pil`` installed backfills them. An unreadable image has none at
+all, and the bridge marks it checked so it is not reopened on every lookup.
 
 Run as a script to backfill a cache directory (``--recompute`` redoes
 portraits that already have a tint):
@@ -20,7 +22,7 @@ import json
 import math
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 HUE_BUCKETS = 24
 DARK_VALUE = 0.22  # HSV value below which a pixel is "dark" rather than a hue
@@ -32,6 +34,25 @@ FOCAL_GRID = 8
 
 DARK = "dark"
 LIGHT = "light"
+
+PILLOW_MISSING_MESSAGE = (
+    "Portrait features are unavailable until python3-pil is installed; "
+    "cached portraits get their tint and focal point once it is."
+)
+_pillow_warned = False
+
+
+def pillow_available(log: Callable[[str], None] | None = None) -> bool:
+    """Whether Pillow can be imported; when it cannot, ``log`` hears about it once per process."""
+    global _pillow_warned
+    try:
+        import PIL.Image  # noqa: F401 - the probe is the import itself
+    except ImportError:
+        if log is not None and not _pillow_warned:
+            _pillow_warned = True
+            log(PILLOW_MISSING_MESSAGE)
+        return False
+    return True
 
 
 def portrait_features(image: bytes) -> dict[str, Any] | None:
@@ -134,7 +155,8 @@ def focal_point(rgb: Any, image_module: Any) -> dict[str, float]:
     cell centres. A uniform image has nothing to point at, so it is centred.
     """
     square = rgb.resize((64, 64))
-    raw = square.resize((FOCAL_GRID, FOCAL_GRID), image_module.Resampling.BOX).tobytes()
+    box = getattr(image_module, "Resampling", image_module).BOX  # the enum arrived in Pillow 9
+    raw = square.resize((FOCAL_GRID, FOCAL_GRID), box).tobytes()
     cells = [raw[offset : offset + 3] for offset in range(0, len(raw), 3)]
     total = len(cells)
     mean = [sum(cell[channel] for cell in cells) / total for channel in range(3)]
@@ -189,6 +211,8 @@ def main(argv: list[str]) -> int:
     if not root.is_dir():
         print(f"not a directory: {root}", file=sys.stderr)
         return 2
+    if not pillow_available(log=lambda message: print(message, file=sys.stderr)):
+        return 1
     for line in backfill(root, recompute=recompute):
         print(line)
     return 0

@@ -80,7 +80,6 @@ export function Frame({
   // Hearing a bird: its own recording through the Pi's speaker, shared with home.
   const { playing, hear } = voices;
   const paletteTick = Math.floor(now / 5_000) * 5_000;
-  const fieldTick = Math.floor(now / 15_000) * 15_000;
   const minuteTick = Math.floor(now / 60_000) * 60_000;
   const weather = hub?.weather ?? null;
 
@@ -105,11 +104,12 @@ export function Frame({
   );
   const mood = useMemo(() => weatherMood(weather, config.facing), [weather, config.facing]);
   const forecast = useMemo(() => parseForecast(hub?.forecast), [hub?.forecast]);
-  const agenda = useMemo(() => agendaFor(hub?.events, fieldTick), [hub?.events, fieldTick]);
+  const agenda = useMemo(() => agendaFor(hub?.events, minuteTick), [hub?.events, minuteTick]);
   const isNight = sun.elevation < -6;
 
-  // The field: every fifteen seconds, from the snapshot and the last field,
-  // so blocks grow and shrink in place rather than being dealt afresh. The
+  // The field: when the snapshot changes and otherwise once a minute, from
+  // the last field, so blocks grow and shrink in place rather than being
+  // dealt afresh, and nothing on the wall moves between events. The
   // previous field is state adjusted during render, the React-sanctioned
   // way to carry one render's result into the next.
   const [fieldState, setFieldState] = useState<{
@@ -119,12 +119,12 @@ export function Frame({
     keys: Set<string>;
     born: ReadonlySet<string>;
   }>({ snapshot: null, tick: 0, field: EMPTY_FIELD, keys: new Set(), born: NO_KEYS });
-  if (fieldState.snapshot !== snapshot || fieldState.tick !== fieldTick) {
-    const next = snapshot ? composeField(snapshot, fieldTick, fieldState.field) : EMPTY_FIELD;
+  if (fieldState.snapshot !== snapshot || fieldState.tick !== minuteTick) {
+    const next = snapshot ? composeField(snapshot, minuteTick, fieldState.field) : EMPTY_FIELD;
     const keys = new Set(next.blocks.map((block) => block.key));
     const born = new Set<string>();
     if (fieldState.tick) for (const key of keys) if (!fieldState.keys.has(key)) born.add(key);
-    setFieldState({ snapshot, tick: fieldTick, field: next, keys, born });
+    setFieldState({ snapshot, tick: minuteTick, field: next, keys, born });
   }
   const { field, born: bornKeys } = fieldState;
 
@@ -181,7 +181,7 @@ export function Frame({
   return (
     <div className="frame" data-mode={mode} data-night={isNight} style={style} aria-hidden={mode !== "frame"}>
       <div className="frame__painting">
-        <Sky palette={palette} sun={sun} moon={moon} illumination={illumination} mood={mood} facing={config.facing} />
+        <Sky tick={paletteTick} palette={palette} sun={sun} moon={moon} illumination={illumination} mood={mood} facing={config.facing} />
         <div className="frame-wash" />
         {pulsing ? <div className="frame-pulse" key={heartbeat} /> : null}
         {!reachable && snapshot ? <div className="frame-unreachable" /> : null}
@@ -189,8 +189,9 @@ export function Frame({
       </div>
       <div className="frame__veil" />
       <div className="frame__chrome">
+        {/* Under the home pages the poster is hidden, so its clock keeps minute time and nothing re-renders each second. */}
         <Poster
-          now={now}
+          now={mode === "frame" ? now : minuteTick}
           minuteTick={minuteTick}
           field={field}
           bornKeys={bornKeys}
@@ -201,7 +202,6 @@ export function Frame({
           place={config.place}
           daylight={daylight}
           reachable={reachable}
-          hourCount={snapshot?.species.length ?? 0}
           todayCount={snapshot ? snapshot.todaySpeciesCount : null}
           quietMinutes={quietMs === null ? null : Math.round(quietMs / 60_000)}
           weather={weather}

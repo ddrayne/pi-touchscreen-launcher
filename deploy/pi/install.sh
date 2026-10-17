@@ -12,6 +12,8 @@ test -f "$source_dir/bridge/wake_listener.py"
 test -x /usr/bin/pw-record
 test -x /usr/bin/pocketsphinx_continuous
 /usr/bin/arecord -L | /usr/bin/grep -q '^pipewire$'
+# Portrait tints and focal points need Pillow; install it only when missing.
+python3 -c 'import PIL' 2>/dev/null || sudo apt-get install -y python3-pil
 
 install -d "$release_dir" "$app_root/bridge" "$app_root/extension"
 install -d "$HOME/.cache/touchscreen-launcher"

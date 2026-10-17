@@ -4,13 +4,14 @@
  * placed by `gridArea`, memoised so a tick only re-renders what changed.
  */
 
-import { memo, type CSSProperties, type PointerEvent } from "react";
+import { memo, useState, type CSSProperties, type ReactNode } from "react";
 import type { AgendaItem } from "../../lib/frame/agenda.ts";
 import type { Portrait } from "../../lib/frame/portraits.ts";
 import type { BirdBlock as BirdBlockModel, MoreBlock as MoreBlockModel, PosterArea } from "../../lib/frame/poster.ts";
 import { tierWeight } from "../../lib/frame/palette.ts";
 import { tierWord } from "../../lib/frame/scene.ts";
 import type { Rgb } from "../../lib/frame/solar.ts";
+import { tapProps } from "./tap.ts";
 import {
   conditionWord,
   forecastDayLabel,
@@ -45,11 +46,6 @@ export function sizeTierOf(area: PosterArea): SizeTier {
   if (cells <= 6) return "medium";
   if (cells <= 9) return "large";
   return "hero";
-}
-
-function stop(event: PointerEvent, action: () => void): void {
-  event.stopPropagation();
-  action();
 }
 
 function callsWord(count: number): string {
@@ -151,6 +147,9 @@ export const BirdBlock = memo(function BirdBlock({
   onTap,
 }: BirdBlockProps) {
   const { species, area } = block;
+  // The arrival flash and ring leave the tree once the ring has played, so a
+  // block that rang is as still as one that never did.
+  const [rang, setRang] = useState(0);
   const tier = sizeTierOf(area);
   const wide = area.cols >= area.rows;
   const style = {
@@ -185,29 +184,29 @@ export const BirdBlock = memo(function BirdBlock({
       style={style}
       aria-label={`${species.commonName}, ${callsWord(species.count)}${playing ? "; playing, touch to stop" : "; touch to hear"}`}
       aria-pressed={playing}
-      onPointerUp={(event) => stop(event, () => onTap(species.commonName))}
+      {...tapProps(() => onTap(species.commonName))}
     >
       {portrait ? (
         <span className="pb__photo" style={{ backgroundImage: `url("${portrait.image}")` }} aria-hidden="true" />
       ) : null}
       {portrait ? <span className="pb__shade" aria-hidden="true" /> : null}
       <span className="pb__text">
-        {block.newToGarden && tier !== "tiny" ? <p className="pb__kicker">New to this garden</p> : null}
-        <h2 className="pb__name">{species.commonName}</h2>
+        {block.newToGarden && tier !== "tiny" ? <span className="pb__kicker">New to this garden</span> : null}
+        <span className="pb__name">{species.commonName}</span>
         {tier !== "tiny" ? (
-          <p className="pb__meta">
+          <span className="pb__meta">
             {meta}
             <span className="pb__dots" aria-hidden="true">
               {"●".repeat(Math.min(species.count, 14))}
               {species.count > 14 ? ` +${species.count - 14}` : ""}
             </span>
-          </p>
+          </span>
         ) : null}
       </span>
-      {arrival > 0 ? (
+      {arrival > 0 && rang !== arrival ? (
         <>
           <span className="pb__flash" key={`flash-${arrival}`} aria-hidden="true" />
-          <span className="pb__ring" key={`ring-${arrival}`} aria-hidden="true" />
+          <span className="pb__ring" key={`ring-${arrival}`} aria-hidden="true" onAnimationEnd={() => setRang(arrival)} />
         </>
       ) : null}
     </button>
@@ -232,11 +231,11 @@ export const MoreBlock = memo(function MoreBlock({
       data-key="more"
       style={{ gridArea: gridAreaOf(block.area, rowOffset) }}
       aria-label={`And ${block.names.length} more: ${block.names.join(", ")}. Open the journal`}
-      onPointerUp={(event) => stop(event, onTap)}
+      {...tapProps(onTap)}
     >
       <span className="pb__text">
-        <h2 className="pb__name">+{block.names.length}</h2>
-        <p className="pb__meta">more</p>
+        <span className="pb__name">+{block.names.length}</span>
+        <span className="pb__meta">more</span>
       </span>
     </button>
   );
@@ -248,16 +247,32 @@ export const GroundBlock = memo(function GroundBlock({ area, rowOffset }: { area
 
 /* House ------------------------------------------------------------------- */
 
-type HouseProps = { gridArea: string; onTap: () => void };
+type HouseProps = { gridArea: string; onTap?: () => void };
+
+/** A house block is a button when it opens something and a still div when it does not. */
+function House({ className, gridArea, onTap, label, children }: HouseProps & { className: string; label?: string; children: ReactNode }) {
+  if (!onTap) {
+    return (
+      <div className={`pb pb--house ${className} pb--still`} style={{ gridArea }} aria-label={label}>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <button type="button" className={`pb pb--house ${className}`} style={{ gridArea }} aria-label={label} {...tapProps(onTap)}>
+      {children}
+    </button>
+  );
+}
 
 export const ClockBlock = memo(function ClockBlock({ now, gridArea, onTap }: HouseProps & { now: number }) {
   return (
-    <button type="button" className="pb pb--house pb--clock" style={{ gridArea }} onPointerUp={(event) => stop(event, onTap)}>
+    <House className="pb--clock" gridArea={gridArea} onTap={onTap}>
       <time className="pb__time" dateTime={new Date(now).toISOString()}>
         {clockOf(now)}
       </time>
       <span className="pb__date">{dateOf(now)}</span>
-    </button>
+    </House>
   );
 });
 
@@ -273,8 +288,8 @@ export const WeatherBlock = memo(function WeatherBlock({
       ? `wind ${Math.round(weather.windSpeed)} ${weather.windSpeedUnit || "km/h"}`
       : "";
   return (
-    <button type="button" className="pb pb--house pb--weather" style={{ gridArea }} onPointerUp={(event) => stop(event, onTap)}>
-      <p className="pb__label">Outside</p>
+    <House className="pb--weather" gridArea={gridArea} onTap={onTap}>
+      <span className="pb__label">Outside</span>
       <span className="pb__temp">
         {temperature !== null ? temperature : "–"}
         <sup>°</sup>
@@ -286,7 +301,7 @@ export const WeatherBlock = memo(function WeatherBlock({
         </span>
         <WeatherGlyph id={weatherGlyph(weather?.condition, night)} size={40} />
       </span>
-    </button>
+    </House>
   );
 });
 
@@ -318,8 +333,8 @@ export const StatusBlock = memo(function StatusBlock({
 export const AgendaBlock = memo(function AgendaBlock({ items, gridArea, onTap }: HouseProps & { items: AgendaItem[] }) {
   const shown = items.slice(0, 2);
   return (
-    <button type="button" className="pb pb--house pb--agenda" style={{ gridArea }} onPointerUp={(event) => stop(event, onTap)}>
-      <p className="pb__label">Coming up</p>
+    <button type="button" className="pb pb--house pb--agenda" style={{ gridArea }} {...tapProps(onTap)}>
+      <span className="pb__label">Coming up</span>
       {shown.length ? (
         shown.map((item) => (
           <span className="pb__item" key={`${item.at}-${item.summary}`} data-kind={item.kind}>
@@ -336,9 +351,9 @@ export const AgendaBlock = memo(function AgendaBlock({ items, gridArea, onTap }:
 
 export const ListBlock = memo(function ListBlock({ count, gridArea, onTap }: HouseProps & { count: number }) {
   return (
-    <button type="button" className="pb pb--house pb--list" style={{ gridArea }} onPointerUp={(event) => stop(event, onTap)}>
-      <p className="pb__label">House list</p>
-      <p className="pb__count">
+    <button type="button" className="pb pb--house pb--list" style={{ gridArea }} {...tapProps(onTap)}>
+      <span className="pb__label">House list</span>
+      <span className="pb__count">
         {count > 0 ? (
           <>
             <strong>{count}</strong>
@@ -347,7 +362,7 @@ export const ListBlock = memo(function ListBlock({ count, gridArea, onTap }: Hou
         ) : (
           "Nothing to buy"
         )}
-      </p>
+      </span>
     </button>
   );
 });
@@ -360,7 +375,7 @@ export const ForecastBlock = memo(function ForecastBlock({
 }: HouseProps & { now: number; forecast: ForecastDay[] }) {
   const days = forecast.slice(0, 5);
   return (
-    <button type="button" className="pb pb--house pb--forecast" style={{ gridArea }} onPointerUp={(event) => stop(event, onTap)} aria-label="Five-day forecast">
+    <House className="pb--forecast" gridArea={gridArea} onTap={onTap} label="Five-day forecast">
       {days.length ? (
         days.map((day) => (
           <span className="pb__day" key={day.date}>
@@ -377,6 +392,6 @@ export const ForecastBlock = memo(function ForecastBlock({
       ) : (
         <span className="pb__empty">Forecast on its way</span>
       )}
-    </button>
+    </House>
   );
 });

@@ -421,7 +421,7 @@ export function castFor(snapshot: FrameSnapshot | null): FrameSpecies[] {
       commonName: latest.commonName,
       scientificName: latest.scientificName,
       count: 1,
-      tier: latest.tier,
+      tier: latest.tier ?? "tentative",
       lastHeard: latest.at,
     });
   }

@@ -308,32 +308,29 @@ function heroCorner(name: string, shape: Shape): PosterArea {
   return { col: hashString(name) % 2 === 0 ? 0 : FIELD_COLS - shape.cols, row: 0, ...shape };
 }
 
-/**
- * Whether a block could take `cells` where it stands without covering another
- * surviving block's previous footprint: free cells, departed species and its
- * own old cells are fair game. Blocks with no history are placed into free
- * space anyway, so they always may.
- */
-function inPlaceGrowth(voices: Voice[], history: History): (block: Sized, cells: number) => boolean {
-  const occupied = new Grid();
-  for (const voice of voices) {
-    const previous = history.areas.get(nameOf(voice));
-    if (previous) occupied.take(previous);
+type CellFree = (col: number, row: number) => boolean;
+
+function contains(area: PosterArea, col: number, row: number): boolean {
+  return col >= area.col && col < area.col + area.cols && row >= area.row && row < area.row + area.rows;
+}
+
+function everyCell(area: PosterArea, test: CellFree): boolean {
+  for (let y = area.row; y < area.row + area.rows; y += 1) {
+    for (let x = area.col; x < area.col + area.cols; x += 1) if (!test(x, y)) return false;
   }
-  return (block, cells) => {
-    const previous = history.areas.get(nameOf(block));
-    if (!previous) return true;
-    return orientationsOf(cells, tallFirstFor(nameOf(block), previous)).some((shape) => {
-      const area = anchored(previous, shape);
-      for (let y = area.row; y < area.row + area.rows; y += 1) {
-        for (let x = area.col; x < area.col + area.cols; x += 1) {
-          const own = x >= previous.col && x < previous.col + previous.cols && y >= previous.row && y < previous.row + previous.rows;
-          if (!own && !occupied.free(x, y)) return false;
-        }
-      }
-      return true;
-    });
-  };
+  return true;
+}
+
+/**
+ * The block spread to `cells` from its anchor, keeping every cell it had and
+ * taking only free ones beyond; null when neither orientation can.
+ */
+function spreadFrom(previous: PosterArea, cells: number, tallFirst: boolean, free: CellFree): PosterArea | null {
+  for (const shape of orientationsOf(cells, tallFirst)) {
+    const area = anchored(previous, shape);
+    if (within(area, previous) && everyCell(area, (col, row) => contains(previous, col, row) || free(col, row))) return area;
+  }
+  return null;
 }
 
 /** The largest shape of at most `cells` that fits inside the old footprint, origin kept. */
@@ -345,6 +342,39 @@ function shrunkInto(previous: PosterArea, cells: number, tallFirst: boolean): Po
     }
   }
   return null;
+}
+
+/**
+ * Where a block of `cells` stands on its old footprint: inside it when it is
+ * no bigger, else spread from the anchor over free cells. The one rule for
+ * growing, pinning and absorbing, so a block never moves between ticks.
+ */
+function standing(previous: PosterArea, cells: number, tallFirst: boolean, free: CellFree): PosterArea | null {
+  if (cells <= previous.cols * previous.rows) return shrunkInto(previous, cells, tallFirst);
+  return spreadFrom(previous, cells, tallFirst, free);
+}
+
+/**
+ * Whether a block could take exactly `cells` where it stands without covering
+ * another surviving block's previous footprint or the more block: free cells,
+ * departed species and its own old cells are fair game. Blocks with no
+ * history are placed into free space anyway, so they always may.
+ */
+function inPlaceGrowth(voices: Voice[], history: History): GrowsInPlace {
+  const occupied = new Grid();
+  for (const voice of voices) {
+    const previous = history.areas.get(nameOf(voice));
+    if (previous) occupied.take(previous);
+  }
+  const more = history.areas.get("more");
+  if (more) occupied.take(more);
+  const free: CellFree = (col, row) => occupied.free(col, row);
+  return (block, cells) => {
+    const previous = history.areas.get(nameOf(block));
+    if (!previous) return true;
+    const area = standing(previous, cells, tallFirstFor(nameOf(block), previous), free);
+    return area !== null && area.cols * area.rows === cells;
+  };
 }
 
 /**
@@ -367,16 +397,17 @@ function findRoom(grid: Grid, block: Sized, previous: PosterArea | undefined): P
   return null;
 }
 
+type Placement = { grid: Grid; placed: Map<string, PosterArea>; order: Sized[]; overflow: string[] };
+
 /**
  * Rule 6: hero, then the survivors in their previous order, then newcomers by
- * weight. First every block that can keep its origin is pinned there: a
- * grown block spreads from its anchor and may shove a neighbour, a shrunk one
- * shrinks into its own footprint. Only then does anything else look for room.
+ * weight. The hero stands first on the empty field, so it always has its full
+ * size: where it stood, or a top corner when it is new. Then every block that
+ * is no bigger than before shrinks into its own footprint, then every grown
+ * block spreads from its anchor over what is free, so growth never covers a
+ * block that stayed. Only then does anything else look for room.
  */
-function place(
-  sized: Sized[],
-  history: History,
-): { placed: Map<string, PosterArea>; order: Sized[]; overflow: string[] } {
+function place(sized: Sized[], history: History): Placement {
   const order = [...sized].sort((left, right) => {
     if (left.hero !== right.hero) return left.hero ? -1 : 1;
     const leftIndex = history.order.get(nameOf(left));
@@ -388,38 +419,78 @@ function place(
   const grid = new Grid();
   const placed = new Map<string, PosterArea>();
   const overflow: string[] = [];
+  const free: CellFree = (col, row) => grid.free(col, row);
   const pin = (name: string, area: PosterArea) => {
     grid.take(area);
     placed.set(name, area);
   };
+  const previousOf = (block: Sized) => history.areas.get(nameOf(block));
+
+  const hero = order.find((block) => block.hero);
+  if (hero) {
+    const previous = previousOf(hero);
+    const stands = previous ? standing(previous, hero.cells, tallFirstFor(nameOf(hero), previous), free) : null;
+    const area = stands ?? findRoom(grid, hero, previous);
+    if (area) pin(nameOf(hero), area);
+  }
 
   for (const block of order) {
     const name = nameOf(block);
-    const previous = history.areas.get(name);
-    if (!previous) continue;
-    const tallFirst = tallFirstFor(name, previous);
-    if (block.cells > previous.cols * previous.rows) {
-      const area = orientationsOf(block.cells, tallFirst)
-        .map((shape) => anchored(previous, shape))
-        .find((candidate) => grid.fits(candidate));
-      if (area) pin(name, area);
-      continue;
-    }
-    const area = shrunkInto(previous, block.cells, tallFirst);
+    const previous = previousOf(block);
+    if (placed.has(name) || !previous || block.cells > previous.cols * previous.rows) continue;
+    const area = shrunkInto(previous, block.cells, tallFirstFor(name, previous));
+    if (area && grid.fits(area)) pin(name, area);
+  }
+
+  for (const block of order) {
+    const name = nameOf(block);
+    const previous = previousOf(block);
+    if (placed.has(name) || !previous) continue;
+    const area = spreadFrom(previous, block.cells, tallFirstFor(name, previous), free);
     if (area && grid.fits(area)) pin(name, area);
   }
 
   for (const block of order) {
     const name = nameOf(block);
     if (placed.has(name)) continue;
-    const area = findRoom(grid, block, history.areas.get(name));
+    const area = findRoom(grid, block, previousOf(block));
     if (area) pin(name, area);
     else overflow.push(name);
   }
-  return { placed, order, overflow };
+  return { grid, placed, order, overflow };
 }
 
-/** Rule 7: free cells become ground, merged along each row up to the side limit. */
+/**
+ * Rule 7: spare cells go to the heaviest block that can spread into them
+ * where it stands, hero first, until none can. Run in the same composition,
+ * so the next tick finds nothing left to take and no block moves without an
+ * event behind it.
+ */
+function absorbGround(grid: Grid, order: Sized[], placed: Map<string, PosterArea>): void {
+  const ranked = [...order].sort(byRank);
+  const free: CellFree = (col, row) => grid.free(col, row);
+  for (;;) {
+    let grown = false;
+    for (const block of ranked) {
+      const name = nameOf(block);
+      const area = placed.get(name);
+      if (!area) continue;
+      for (const cells of SHAPE_AREAS) {
+        if (cells <= area.cols * area.rows) continue;
+        const spread = spreadFrom(area, cells, tallFirstFor(name, area), free);
+        if (!spread) continue;
+        grid.take(spread);
+        placed.set(name, spread);
+        grown = true;
+        break;
+      }
+      if (grown) break;
+    }
+    if (!grown) break;
+  }
+}
+
+/** Rule 8: what is still free becomes ground, merged along each row up to the side limit. */
 function fillGround(grid: Grid): GroundBlock[] {
   const ground: GroundBlock[] = [];
   for (let row = 0; row < FIELD_ROWS; row += 1) {
@@ -496,15 +567,24 @@ export function composeField(
     if (block.kind === "bird") previousCells.set(block.key, block.area.cols * block.area.rows);
   }
   const { kept, dropped } = capCandidates(candidates, options.maxBirds, history);
-  const { sized, more } = allocateCells(kept, previousCells, inPlaceGrowth(voices, history), dropped);
-  const { placed, order, overflow } = place(sized, history);
+  const { sized, more } = allocateCells(kept, previousCells, inPlaceGrowth(kept, history), dropped);
+  const { grid, placed, order, overflow } = place(sized, history);
 
-  const grid = new Grid();
+  const names = [...more, ...overflow];
+  let moreArea: PosterArea | null = null;
+  if (names.length) {
+    const cell = { cols: 1, rows: 1 };
+    const previousMore = history.areas.get("more");
+    const first = previousMore ? anchored(previousMore, cell) : null;
+    moreArea = first && grid.fits(first) ? first : grid.scan(cell, 0);
+    if (moreArea) grid.take(moreArea);
+  }
+  absorbGround(grid, order, placed);
+
   const blocks: PosterBlock[] = [];
   for (const block of order) {
     const area = placed.get(nameOf(block));
     if (!area) continue;
-    grid.take(area);
     blocks.push({
       kind: "bird",
       key: nameOf(block),
@@ -516,20 +596,21 @@ export function composeField(
       newToGarden: block.newToGarden,
     });
   }
-
-  const names = [...more, ...overflow];
-  if (names.length) {
-    const cell = { cols: 1, rows: 1 };
-    const previousMore = history.areas.get("more");
-    const first = previousMore ? anchored(previousMore, cell) : null;
-    const area = first && grid.fits(first) ? first : grid.scan(cell, 0);
-    if (area) {
-      grid.take(area);
-      blocks.push({ kind: "more", key: "more", names, area });
-    }
-  }
+  if (moreArea) blocks.push({ kind: "more", key: "more", names, area: moreArea });
   blocks.push(...fillGround(grid));
   return { window, blocks };
+}
+
+/**
+ * How many voices the field speaks for: its bird blocks plus the names folded
+ * into the more block, so a capped field still owns up to the whole hour.
+ */
+export function fieldVoices(field: PosterField): number {
+  return field.blocks.reduce((sum, block) => {
+    if (block.kind === "bird") return sum + 1;
+    if (block.kind === "more") return sum + block.names.length;
+    return sum;
+  }, 0);
 }
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";

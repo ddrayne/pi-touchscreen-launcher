@@ -117,6 +117,14 @@ test("the cast takes in the latest call when today's list has not caught up", as
   assert.equal(cast[0].lastHeard, RECEIVED + 60_000);
 });
 
+test("a latest call without a tier joins the cast as tentative", async () => {
+  const snapshot = parseSnapshot(await fixture("now-morning.json"), RECEIVED, await fixture("today-morning.json"));
+  const { tier: _dropped, ...untiered } = { ...snapshot.latest, id: snapshot.latest.id + 1, commonName: "Tawny Owl" };
+  const cast = castFor({ ...snapshot, latest: untiered });
+  assert.equal(cast[0].commonName, "Tawny Owl");
+  assert.equal(cast[0].tier, "tentative");
+});
+
 test("weather becomes a mood and absence is a still sky", () => {
   assert.equal(weatherMood(null).rain, 0);
   const rain = weatherMood({ condition: "pouring", temperature: 7, windSpeed: 36, windSpeedUnit: "km/h", windBearing: 270 }, 180);
