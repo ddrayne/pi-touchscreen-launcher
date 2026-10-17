@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { frameNow, withFrameTime } from "./clock.ts";
+import { discardBody, readJson as readJsonBody } from "../http.ts";
 import {
   applyDetection,
   parseDetection,
@@ -58,13 +59,18 @@ export function useBirdframeStream(): BirdframeStream {
 
     const poll = async () => {
       try {
-        const [nowResponse, todayResponse] = await Promise.all([
-          fetch(withFrameTime("/api/birdframe"), { cache: "no-store" }),
-          fetch(withFrameTime("/api/birdframe/today"), { cache: "no-store" }).catch(() => null),
+        const [now, today] = await Promise.all([
+          fetch(withFrameTime("/api/birdframe"), { cache: "no-store" }).then((response) =>
+            readJsonBody<unknown>(response, "BirdFrame unavailable"),
+          ),
+          fetch(withFrameTime("/api/birdframe/today"), { cache: "no-store" })
+            .then(async (response) => {
+              if (response.ok) return (await response.json()) as unknown;
+              await discardBody(response);
+              return undefined;
+            })
+            .catch(() => undefined),
         ]);
-        if (!nowResponse.ok) throw new Error("BirdFrame unavailable");
-        const now = await nowResponse.json();
-        const today = todayResponse && todayResponse.ok ? await todayResponse.json() : undefined;
         acceptSnapshot(now, today, true);
       } catch {
         if (!closed) setState((current) => ({ ...current, reachable: false }));

@@ -200,6 +200,8 @@ export function conditionWord(condition: string | undefined): string {
   return CONDITION_WORDS[condition.toLowerCase()] ?? condition.replace(/-/g, " ");
 }
 
+const SHORT_WEEKDAY = new Intl.DateTimeFormat("en-GB", { weekday: "short" });
+
 /** "Today", "Tomorrow", then the weekday. */
 export function forecastDayLabel(date: string, now: number): string {
   const day = new Date(date);
@@ -211,5 +213,5 @@ export function forecastDayLabel(date: string, now: number): string {
   const difference = Math.round((target.getTime() - start.getTime()) / 86_400_000);
   if (difference === 0) return "Today";
   if (difference === 1) return "Tomorrow";
-  return new Intl.DateTimeFormat("en-GB", { weekday: "short" }).format(day);
+  return SHORT_WEEKDAY.format(day);
 }

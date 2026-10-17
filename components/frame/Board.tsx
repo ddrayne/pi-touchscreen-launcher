@@ -16,10 +16,10 @@ import {
   type WeatherGlyphId,
 } from "../../lib/frame/weather.ts";
 
+const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+
 function clockOf(at: number): string {
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(
-    new Date(at),
-  );
+  return CLOCK.format(new Date(at));
 }
 
 const CLOUD = "M 11 30 a 7 7 0 0 1 2 -13.7 a 9 9 0 0 1 17.4 -2 a 7 7 0 0 1 7.6 7.2 a 6 6 0 0 1 -1 8.5 Z";
@@ -83,6 +83,7 @@ export const WeatherGlyph = memo(function WeatherGlyph({ id, size = 44 }: { id: 
 });
 
 type WeatherStripProps = {
+  /** A coarse tick: the labels only care which day it is. */
   now: number;
   weather: HubWeather | null;
   forecast: ForecastDay[];

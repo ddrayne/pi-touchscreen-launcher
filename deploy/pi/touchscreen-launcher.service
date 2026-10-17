@@ -5,6 +5,10 @@ Wants=graphical-session.target pipewire.service wireplumber.service touchscreen-
 
 [Service]
 Type=simple
+# Each unread fetch body costs the renderer a file descriptor; the default
+# 1024 is a wall it hit once. The bridge's watchdog catches the leak long
+# before this limit does.
+LimitNOFILE=16384
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=DISPLAY=:0
@@ -27,7 +31,8 @@ ExecStart=/usr/bin/chromium \
   --remote-debugging-port=9222 \
   --autoplay-policy=no-user-gesture-required \
   --unsafely-treat-insecure-origin-as-secure=http://192.168.86.24:18789 \
-  --use-fake-ui-for-media-stream
+  --use-fake-ui-for-media-stream \
+  --disable-renderer-accessibility
 Restart=always
 RestartSec=4
 TimeoutStopSec=10

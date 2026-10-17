@@ -245,7 +245,7 @@ The bridge binds to loopback only.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/status` | OpenClaw, voice broker, BirdFrame, and wake-service health |
+| `GET /api/status` | OpenClaw, voice broker, BirdFrame, wake-service health, and the watchdog's state |
 | `GET /api/birdframe` | Read-only proxy of BirdFrame’s live snapshot |
 | `GET /api/birdframe/events` | Server-sent events: `snapshot` every 30 s, `detection` within a second of a call, `heartbeat` |
 | `GET /api/birdframe/today` | Today's species, proxied |
@@ -256,7 +256,8 @@ The bridge binds to loopback only.
 | `GET /api/config` | Latitude, longitude, window facing and place name |
 | `GET/POST /api/display` | Read or set the panel backlight (`{"brightness": 0..1}`) |
 | `GET /api/camera.jpg` | Fresh native IMX708 JPEG frame |
-| `GET /api/wake` | Pending wake sequence for launcher/extension |
+| `GET /api/wake` | Pending wake sequence; the page polls it every 15 s as its heartbeat |
+| `GET /api/wake/events` | Server-sent events: a `wake` event the moment the wake word is heard |
 | `POST /api/wake` | Trigger or acknowledge a local wake event |
 | `POST /api/window` | Focus `assistant` or `birdframe` |
 | `POST /api/voice/session` | Request a short-lived WebRTC session |
@@ -400,6 +401,29 @@ systemctl --user restart touchscreen-launcher.service
 ```
 
 All services use `Restart=always` and are enabled under the user session.
+
+The bridge also watches the kiosk and restarts `touchscreen-launcher.service`
+when Chromium wedges rather than crashes. Three signals, each seen in the
+wild: the page's main thread stops polling `/api/wake` for three minutes
+while the launcher is the window on screen; the browser's UI thread stops
+answering `http://127.0.0.1:9222/json/version` three probes in a row; or
+Chromium's shared memory in tmpfs (`/tmp` on Debian 13) passes 1.25 GB. A
+fresh launcher gets two minutes to load, restarts are at most one per five
+minutes, and each is logged with its reason. `GET /api/status` reports the
+watchdog's counters under `watchdog`.
+
+Why the shared-memory rule: every fetch body Chromium hands a page is a 2 MB
+data pipe with a file descriptor, and an error response whose body is never
+read keeps both until a full garbage collection, which a quiet page may not
+run for hours. In October 2026 the page polled a failing household endpoint
+every 20 s for five hours, accumulated 992 such pipes, hit the renderer's
+1024-descriptor limit and deadlocked; two days later the GPU process died
+and the browser never recovered. Every fetch in the page now reads or cancels
+its body (`lib/http.ts`), and the launcher unit raises `LimitNOFILE` so a
+future leak reaches the watchdog's memory rule before the descriptor wall.
+
+The bridge logs writes and errors only; a successful `GET` is not a journal
+line, which keeps journald quiet on the SD card.
 Chromium uses a dedicated profile with `--password-store=basic`; this avoids
 the desktop keyring prompt that otherwise leaves a white kiosk after boot. The
 OpenClaw device pairing and Control UI session survive service restarts and

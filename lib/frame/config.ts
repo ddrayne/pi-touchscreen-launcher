@@ -1,5 +1,7 @@
 /** Where the window is and which way it faces. Served by the bridge from the installer's environment. */
 
+import { readJson } from "../http.ts";
+
 export type FrameConfig = {
   latitude: number;
   longitude: number;
@@ -21,9 +23,10 @@ function finite(value: unknown, fallback: number): number {
 
 export async function loadFrameConfig(): Promise<FrameConfig> {
   try {
-    const response = await fetch("/api/config", { cache: "no-store" });
-    if (!response.ok) return DEFAULT_FRAME_CONFIG;
-    const raw = (await response.json()) as Record<string, unknown>;
+    const raw = await readJson<Record<string, unknown>>(
+      await fetch("/api/config", { cache: "no-store" }),
+      "config unavailable",
+    );
     return {
       latitude: finite(raw.latitude, DEFAULT_FRAME_CONFIG.latitude),
       longitude: finite(raw.longitude, DEFAULT_FRAME_CONFIG.longitude),

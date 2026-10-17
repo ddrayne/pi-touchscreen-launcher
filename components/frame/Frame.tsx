@@ -82,16 +82,15 @@ export function typeInkFor(darkness: number): Rgb {
   return mixRgb(TYPE_DAY, TYPE_NIGHT, smoothstep(0.18, 0.3, darkness));
 }
 
+const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+const DATE = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
+
 function clockOf(at: number): string {
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(
-    new Date(at),
-  );
+  return CLOCK.format(new Date(at));
 }
 
 function dateOf(at: number): string {
-  return new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(
-    new Date(at),
-  );
+  return DATE.format(new Date(at));
 }
 
 export function Frame({ now, config, stream, hub, shoppingCount, mode, voices, onOpenJournal }: FrameProps) {
@@ -205,12 +204,12 @@ export function Frame({ now, config, stream, hub, shoppingCount, mode, voices, o
           <p className="frame-place__status">{status}</p>
         </div>
         <div className="frame-clock">
-          <time className="frame-clock__time" dateTime={new Date(now).toISOString()}>
+          <time className="frame-clock__time" dateTime={new Date(rowsTick).toISOString()}>
             {clockOf(now)}
           </time>
           <span className="frame-clock__date">{dateOf(now)}</span>
         </div>
-        <WeatherStrip now={now} weather={weather} forecast={forecast} night={isNight} />
+        <WeatherStrip now={rowsTick} weather={weather} forecast={forecast} night={isNight} />
         <RollCall
           rows={rows}
           bloom={bloom}

@@ -91,9 +91,8 @@ button {
   border: 1px solid rgba(24, 43, 37, 0.14);
   border-radius: 99rem;
   padding: 0.4rem;
-  background: rgba(247, 244, 234, 0.9);
+  background: rgba(247, 244, 234, 0.96);
   box-shadow: 0 10px 32px rgba(24, 43, 37, 0.14);
-  backdrop-filter: blur(14px);
   transform: translateX(-50%);
 }
 
@@ -1050,9 +1049,8 @@ button {
 .shopping-sheet__bar {
   flex: 0 0 auto;
   border-color: var(--hairline);
-  background: rgba(247, 244, 234, 0.94);
+  background: rgba(247, 244, 234, 0.98);
   color: var(--ink);
-  backdrop-filter: blur(18px);
 }
 
 .shopping-sheet__bar > div {
@@ -1526,12 +1524,11 @@ button {
   top: 1.5rem;
   border-radius: 99rem;
   padding: 0.65rem 0.9rem;
-  background: rgba(8, 13, 11, 0.72);
+  background: rgba(8, 13, 11, 0.86);
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  backdrop-filter: blur(12px);
 }
 
 .camera-sheet__controls {
@@ -1546,8 +1543,7 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 1.15rem;
   padding: 0.85rem 0.9rem 0.85rem 1.15rem;
-  background: rgba(8, 13, 11, 0.78);
-  backdrop-filter: blur(16px);
+  background: rgba(8, 13, 11, 0.9);
 }
 
 .camera-sheet__controls p {
@@ -1928,7 +1924,7 @@ button {
 
 .bird-card__hear {
   z-index: 1;
-  backdrop-filter: blur(8px);
+  background: rgba(16, 24, 21, 0.55);
 }
 
 /* Today in the garden: every bird heard today, one tap to hear. ------- */
@@ -2026,14 +2022,13 @@ button {
   place-items: center;
   border-radius: 99rem;
   padding: 0 0.6rem;
-  background: rgba(16, 24, 21, 0.62);
+  background: rgba(16, 24, 21, 0.78);
   color: #f7f2e6;
   font-family: inherit;
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  backdrop-filter: blur(6px);
 }
 
 .today-bird[data-playing="true"] .today-bird__play {

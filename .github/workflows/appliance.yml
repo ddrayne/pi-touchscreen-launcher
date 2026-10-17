@@ -33,8 +33,9 @@ jobs:
       - name: Typecheck and test the scene logic
         run: |
           npx tsc -p tsconfig.appliance.json --noEmit
-          node --test tests/frame-*.test.mjs tests/realtime-voice.test.mjs
-          python3 -m py_compile bridge/launcher_bridge.py bridge/wake_listener.py
+          node --test tests/frame-*.test.mjs tests/http.test.mjs tests/wake.test.mjs tests/realtime-voice.test.mjs
+          python3 -m py_compile bridge/launcher_bridge.py bridge/launcher_watchdog.py bridge/wake_listener.py
+          python3 -m unittest discover -s bridge -p 'test_*.py'
 
       - run: npm run appliance:build
 

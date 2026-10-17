@@ -21,6 +21,9 @@ export type AgendaItem = {
 };
 
 const BIN_WORDS = /\b(bin|bins|recycling|refuse|rubbish|garden waste|food waste|glass collection)\b/i;
+const WEEKDAY = new Intl.DateTimeFormat("en-GB", { weekday: "long" });
+const DAY_MONTH = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
 
 function startOfDay(at: number): number {
   const date = new Date(at);
@@ -48,15 +51,12 @@ export function agendaLabel(at: number, allDay: boolean, now: number): string {
   if (difference === 0) day = "Today";
   else if (difference === 1) day = "Tomorrow";
   else if (difference > 1 && difference < 7) {
-    day = new Intl.DateTimeFormat("en-GB", { weekday: "long" }).format(new Date(at));
+    day = WEEKDAY.format(new Date(at));
   } else {
-    day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(at));
+    day = DAY_MONTH.format(new Date(at));
   }
   if (allDay) return day;
-  const time = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(
-    new Date(at),
-  );
-  return `${day} ${time}`;
+  return `${day} ${CLOCK.format(new Date(at))}`;
 }
 
 export function agendaFor(events: HubEvent[] | null | undefined, now: number, limit = 4): AgendaItem[] {

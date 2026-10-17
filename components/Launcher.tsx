@@ -19,6 +19,8 @@ import {
   type VoiceConversationEntry,
 } from "../lib/voiceConversation";
 import { useFrameClock, withFrameTime } from "../lib/frame/clock";
+import { readJson, settle } from "../lib/http";
+import { watchWake } from "../lib/wake";
 import { todayTiles } from "../lib/frame/birds";
 import {
   DEFAULT_FRAME_CONFIG,
@@ -41,6 +43,35 @@ import { TodayBirds } from "./TodayBirds";
 const FRAME_WIDTH = 1200;
 const FRAME_HEIGHT = 1920;
 const HOME_IDLE_MS = 90_000;
+/** A failed conversation shows its reason, then lets the wake word back in. */
+const VOICE_ERROR_HOLD_MS = 20_000;
+/** The camera sheet captures a frame every two seconds; it must not be left running. */
+const CAMERA_IDLE_MS = 120_000;
+/** A shopping sheet nobody is touching gives the screen back to the frame. */
+const SHOPPING_IDLE_MS = 300_000;
+
+const CLOCK_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+const DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+});
+const EVENT_DAY_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+});
+const EVENT_TIME_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 function initialMode(): FrameMode {
   if (typeof window === "undefined") return "frame";
@@ -64,12 +95,6 @@ type ApplianceStatus = {
   birdframeRunning?: boolean;
   wakeReady?: boolean;
   shoppingReady?: boolean;
-};
-
-type WakeStatus = {
-  pending?: boolean;
-  sequence?: number;
-  muted?: boolean;
 };
 
 function VoiceTranscriptText({ entry }: { entry: VoiceConversationEntry }) {
@@ -356,19 +381,11 @@ function timeAgo(seconds: number | undefined): string {
 }
 
 function formatClock(now: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(now);
+  return CLOCK_FORMAT.format(now);
 }
 
 function formatDate(now: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(now);
+  return DATE_FORMAT.format(now);
 }
 
 function weatherSymbol(condition: string | undefined): string {
@@ -383,12 +400,7 @@ function weatherSymbol(condition: string | undefined): string {
 
 function formatHubEventStart(start: string, allDay: boolean): string {
   const date = new Date(allDay ? `${start}T12:00:00` : start);
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    ...(allDay ? {} : { hour: "2-digit", minute: "2-digit" }),
-  }).format(date);
+  return (allDay ? EVENT_DAY_FORMAT : EVENT_TIME_FORMAT).format(date);
 }
 
 export function Launcher() {
@@ -432,7 +444,6 @@ export function Launcher() {
   const [newShoppingItem, setNewShoppingItem] = useState("");
   const [editingShoppingItem, setEditingShoppingItem] =
     useState<ShoppingItem | null>(null);
-  const lastWakeSequence = useRef(0);
   const contextRef = useRef<() => string | null>(() => null);
   const voiceSession = useRef<InlineRealtimeVoice | null>(null);
   const newShoppingItemInput = useRef<HTMLInputElement | null>(null);
@@ -441,11 +452,13 @@ export function Launcher() {
   const voiceActive = voiceState !== "idle";
 
   const muteWake = useCallback((seconds: number) => {
-    void fetch("/api/wake", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "mute", seconds }),
-    }).catch(() => undefined);
+    void settle(
+      fetch("/api/wake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "mute", seconds }),
+      }),
+    );
   }, []);
   const voices = useBirdVoices(frameNow, muteWake);
   const stopVoices = voices.stop;
@@ -529,14 +542,12 @@ export function Launcher() {
 
   const refresh = useCallback(async () => {
     const [statusResult, householdResult] = await Promise.allSettled([
-      fetch("/api/status", { cache: "no-store" }).then((response) => {
-        if (!response.ok) throw new Error("status unavailable");
-        return response.json() as Promise<ApplianceStatus>;
-      }),
-      fetch(withFrameTime("/api/household"), { cache: "no-store" }).then((response) => {
-        if (!response.ok) throw new Error("Household hub unavailable");
-        return response.json() as Promise<HouseholdHub>;
-      }),
+      fetch("/api/status", { cache: "no-store" }).then((response) =>
+        readJson<ApplianceStatus>(response, "status unavailable"),
+      ),
+      fetch(withFrameTime("/api/household"), { cache: "no-store" }).then((response) =>
+        readJson<HouseholdHub>(response, "Household hub unavailable"),
+      ),
     ]);
 
     if (statusResult.status === "fulfilled") setStatus(statusResult.value);
@@ -687,29 +698,17 @@ export function Launcher() {
     else void startVoice();
   }, [startVoice, stopVoice]);
 
+  // The wake word is pushed by the bridge; the slow poll behind it is also
+  // the heartbeat the bridge's watchdog listens for.
+  useEffect(() => watchWake({ onWake: () => void startVoice() }), [startVoice]);
+
+  // A conversation that could not start shows why, then steps aside so the
+  // wake word works again and the frame can return.
   useEffect(() => {
-    const watchWake = window.setInterval(() => {
-      void fetch("/api/wake", { cache: "no-store" })
-        .then((response) => response.json() as Promise<WakeStatus>)
-        .then((wake) => {
-          const sequence = wake.sequence || 0;
-          if (
-            wake.pending &&
-            sequence > lastWakeSequence.current
-          ) {
-            lastWakeSequence.current = sequence;
-            void startVoice();
-            void fetch("/api/wake", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ action: "ack", sequence }),
-            });
-          }
-        })
-        .catch(() => undefined);
-    }, 900);
-    return () => window.clearInterval(watchWake);
-  }, [startVoice]);
+    if (voiceState !== "error") return;
+    const timer = window.setTimeout(stopVoice, VOICE_ERROR_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [stopVoice, voiceState]);
 
   useEffect(() => {
     if (!voiceActive) return;
@@ -749,6 +748,32 @@ export function Launcher() {
     }, HOME_IDLE_MS);
     return () => window.clearTimeout(timer);
   }, [mode, shoppingOpen, cameraOpen, voiceActive, lastTouch, stopVoices]);
+
+  // Sheets left open are closed after a quiet spell: the camera because it
+  // keeps the Pi capturing frames, shopping so the frame comes back.
+  useEffect(() => {
+    if (!cameraOpen) return;
+    const timer = window.setTimeout(() => {
+      setCameraOpen(false);
+      setCameraAnalysis(null);
+      setCameraSelectedItems([]);
+      setCameraBusy(null);
+      setCameraNotice(null);
+      setCameraError(null);
+    }, CAMERA_IDLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [cameraOpen, lastTouch]);
+
+  useEffect(() => {
+    if (!shoppingOpen) return;
+    const timer = window.setTimeout(() => {
+      setShoppingOpen(false);
+      setEditingShoppingItem(null);
+      setShoppingError(null);
+      setShoppingNotice(null);
+    }, SHOPPING_IDLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [editingShoppingItem, lastTouch, newShoppingItem, shoppingOpen]);
 
   const closeCamera = useCallback(() => {
     setCameraOpen(false);
@@ -851,15 +876,14 @@ export function Launcher() {
 
   const openBirdframe = useCallback(async () => {
     stopVoice();
-    try {
-      await fetch("/api/window", {
+    // Without the Pi bridge (a desktop preview) the request fails quietly.
+    await settle(
+      fetch("/api/window", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target: "birdframe" }),
-      });
-    } catch {
-      // The live card remains useful in a desktop preview without the Pi bridge.
-    }
+      }),
+    );
   }, [stopVoice]);
 
   const openShopping = useCallback(
@@ -1491,7 +1515,7 @@ export function Launcher() {
             <p className="launcher__eyebrow">{frameConfig.place} · home</p>
             <h1 className="launcher__place">{greetingFor(frameNow)}</h1>
           </div>
-          <div className="launcher__clock" aria-label={now.toLocaleString()}>
+          <div className="launcher__clock">
             <time className="launcher__time">{formatClock(now)}</time>
             <span className="launcher__date">{formatDate(now)}</span>
           </div>
@@ -1683,7 +1707,7 @@ export function Launcher() {
           newest={latestCall?.commonName ?? null}
           reachable={stream.reachable}
           lastHeardAt={latestCall?.at ?? null}
-          onHear={(commonName) => voices.hear(commonName)}
+          onHear={voices.hear}
           onOpenJournal={openBirdframe}
         />
         </div>
@@ -2078,10 +2102,7 @@ export function Launcher() {
                       </span>
                       <small>
                         {activity.source.replace("-", " ")} ·{" "}
-                        {new Intl.DateTimeFormat("en-GB", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }).format(new Date(activity.at))}
+                        {CLOCK_FORMAT.format(new Date(activity.at))}
                       </small>
                     </li>
                   ))}

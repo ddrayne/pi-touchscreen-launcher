@@ -5,7 +5,8 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { withFrameTime } from "./clock.ts";
+import { frameNow, withFrameTime } from "./clock.ts";
+import { readJson } from "../http.ts";
 import { playClip, stopClip } from "./clips.ts";
 
 export type DayRecord = {
@@ -47,9 +48,10 @@ function useDayRecord(key: string): DayRecord | null {
     let cancelled = false;
     const load = async () => {
       try {
-        const response = await fetch(withFrameTime("/api/birdframe/day"), { cache: "no-store" });
-        if (!response.ok) throw new Error("no day");
-        const raw = (await response.json()) as Record<string, unknown>;
+        const raw = await readJson<Record<string, unknown>>(
+          await fetch(withFrameTime("/api/birdframe/day"), { cache: "no-store" }),
+          "no day",
+        );
         const images = Array.isArray(raw.images) ? raw.images : [];
         const latest = images
           .map((entry) => (entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {}))
@@ -103,7 +105,9 @@ export function useBirdVoices(now: number, muteWake: (seconds: number) => void):
       }
       const url = explicitUrl
         ? `/api/birdframe/clip?url=${encodeURIComponent(explicitUrl)}`
-        : clipUrlFor(day, commonName, now);
+        // Read the clock directly so `hear` keeps its identity across ticks
+        // and the memoised board does not re-render every second.
+        : clipUrlFor(day, commonName, frameNow());
       setPlaying(commonName);
       playClip(url, {
         onStart: (duration) => muteWake(Math.min(60, duration + 1.5)),
@@ -115,7 +119,7 @@ export function useBirdVoices(now: number, muteWake: (seconds: number) => void):
         },
       });
     },
-    [day, muteWake, now, playing, stop],
+    [day, muteWake, playing, stop],
   );
 
   useEffect(() => () => stopClip(), []);

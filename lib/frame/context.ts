@@ -8,10 +8,18 @@ import type { FrameConfig } from "./config.ts";
 import type { FrameSnapshot } from "./scene.ts";
 import type { HubWeather } from "./weather.ts";
 
+const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+const WHEN = new Intl.DateTimeFormat("en-GB", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 function clockOf(at: number): string {
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(
-    new Date(at),
-  );
+  return CLOCK.format(new Date(at));
 }
 
 export function gardenContext(
@@ -20,14 +28,7 @@ export function gardenContext(
   snapshot: FrameSnapshot | null,
   weather: HubWeather | null | undefined,
 ): string {
-  const when = new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(now));
+  const when = WHEN.format(new Date(now));
   const lines = [
     `Context from the kitchen touchscreen, which shows a live painting of the garden heard by BirdFrame at the ${config.place} window. It is ${when}.`,
   ];

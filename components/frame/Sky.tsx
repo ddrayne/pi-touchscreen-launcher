@@ -28,6 +28,8 @@ type SkyProps = {
 };
 
 const STARS = starField(120, 11);
+/** Every third star twinkles; they live outside the SVG so the compositor animates them alone. */
+const TWINKLES = STARS.filter((_, index) => index % 3 === 0);
 
 /** The lit part of the moon as an SVG path, for a disc of radius r at (cx, cy). */
 function moonLitPath(cx: number, cy: number, r: number, phase: number): string {
@@ -63,6 +65,11 @@ export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, f
   const cover = 1 - mood.cloud * 0.72 - mood.fog * 0.8;
   const moonPath = useMemo(() => moonLitPath(32, 32, 28, illumination.phase), [illumination.phase]);
   const cloudCount = Math.min(CLOUDS.length, Math.ceil(mood.cloud * CLOUDS.length + 0.001));
+  // An invisible star field is not painted, so Chromium cannot hand its
+  // twinkle to the compositor and would run forty animations on the main
+  // thread all day for nothing. Stars exist only once the sky is dark enough.
+  const starOpacity = palette.stars * (1 - mood.cloud * 0.85);
+  const starsVisible = starOpacity > 0.02;
   const cloudStyle = {
     "--frame-wind": String(mood.wind),
     "--frame-wind-direction": String(mood.windDirection),
@@ -71,30 +78,50 @@ export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, f
   return (
     <>
       <div className="frame-sky" />
-      <svg
-        className="frame-stars"
-        viewBox={`0 0 ${FRAME_WIDTH} ${FRAME_HEIGHT}`}
-        preserveAspectRatio="xMidYMax slice"
-        style={{ opacity: palette.stars * (1 - mood.cloud * 0.85) }}
-        aria-hidden="true"
-      >
-        {STARS.map((star, index) => (
-          <circle
-            key={index}
-            className={index % 3 === 0 ? "frame-star frame-star--twinkle" : "frame-star"}
-            cx={star.x * FRAME_WIDTH}
-            cy={star.y * FRAME_HEIGHT}
-            r={star.size}
-            style={index % 3 === 0 ? ({ "--delay": `${-star.twinkle * 9}s` } as CSSProperties) : undefined}
-          />
-        ))}
-      </svg>
+      {starsVisible ? (
+        <svg
+          className="frame-stars"
+          viewBox={`0 0 ${FRAME_WIDTH} ${FRAME_HEIGHT}`}
+          preserveAspectRatio="xMidYMax slice"
+          style={{ opacity: starOpacity }}
+          aria-hidden="true"
+        >
+          {STARS.map((star, index) =>
+            index % 3 === 0 ? null : (
+              <circle
+                key={index}
+                className="frame-star"
+                cx={star.x * FRAME_WIDTH}
+                cy={star.y * FRAME_HEIGHT}
+                r={star.size}
+              />
+            ),
+          )}
+        </svg>
+      ) : null}
+      {starsVisible ? (
+        <div className="frame-twinkles" style={{ opacity: starOpacity }} aria-hidden="true">
+          {TWINKLES.map((star, index) => (
+            <i
+              key={index}
+              className="frame-twinkle"
+              style={{
+                left: star.x * FRAME_WIDTH - star.size,
+                top: star.y * FRAME_HEIGHT - star.size,
+                width: star.size * 2,
+                height: star.size * 2,
+                "--delay": `${-star.twinkle * 9}s`,
+              } as CSSProperties}
+            />
+          ))}
+        </div>
+      ) : null}
       {sunSpot.visible ? (
         <div
           className="frame-sun"
           style={{
-            left: sunSpot.x * FRAME_WIDTH,
-            top: sunSpot.y * FRAME_HEIGHT,
+            "--sky-x": `${(sunSpot.x * FRAME_WIDTH).toFixed(1)}px`,
+            "--sky-y": `${(sunSpot.y * FRAME_HEIGHT).toFixed(1)}px`,
             opacity: Math.max(0.1, cover) * 0.7,
             "--sun-size": `${sunSize}px`,
             "--sun-low": String(sunLow),
@@ -106,10 +133,10 @@ export const Sky = memo(function Sky({ palette, sun, moon, illumination, mood, f
           className="frame-moon"
           viewBox="0 0 64 64"
           style={{
-            left: moonSpot.x * FRAME_WIDTH,
-            top: moonSpot.y * FRAME_HEIGHT,
+            "--sky-x": `${(moonSpot.x * FRAME_WIDTH).toFixed(1)}px`,
+            "--sky-y": `${(moonSpot.y * FRAME_HEIGHT).toFixed(1)}px`,
             opacity: (0.28 + palette.darkness * 0.72) * Math.max(0.1, cover),
-          }}
+          } as CSSProperties}
           aria-hidden="true"
         >
           <circle className="frame-moon__shadow" cx="32" cy="32" r="28" />

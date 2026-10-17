@@ -1,6 +1,7 @@
 /** Wikimedia portraits through the bridge's cache, with their credits. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { discardBody } from "../http.ts";
 
 export type Portrait = {
   image: string;
@@ -32,7 +33,10 @@ export function loadPortrait(scientificName: string): Promise<Portrait | null> {
     cache: "force-cache",
   })
     .then(async (response) => {
-      if (!response.ok) return null;
+      if (!response.ok) {
+        await discardBody(response);
+        return null;
+      }
       const raw = (await response.json()) as Record<string, unknown>;
       if (typeof raw.image !== "string" || !raw.image) return null;
       return {
@@ -56,7 +60,7 @@ export function loadPortrait(scientificName: string): Promise<Portrait | null> {
 
 /** Portraits for a set of species, re-rendering as each arrives. */
 export function usePortraits(scientificNames: string[]): Map<string, Portrait | null> {
-  const [, setVersion] = useState(0);
+  const [version, setVersion] = useState(0);
   const key = scientificNames.join("|");
   useEffect(() => {
     const listener = () => setVersion((value) => value + 1);
@@ -66,10 +70,15 @@ export function usePortraits(scientificNames: string[]): Map<string, Portrait | 
       listeners.delete(listener);
     };
   }, [key]);
-  const result = new Map<string, Portrait | null>();
-  for (const name of scientificNames) {
-    const portrait = cache.get(name);
-    if (portrait !== undefined) result.set(name, portrait);
-  }
-  return result;
+  // One Map per change, so memoised rows and tiles skip the clock's ticks.
+  // `version` is the module cache's change counter, which React cannot see.
+  return useMemo(() => {
+    const result = new Map<string, Portrait | null>();
+    for (const name of key.split("|")) {
+      const portrait = cache.get(name);
+      if (name && portrait !== undefined) result.set(name, portrait);
+    }
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, version]);
 }

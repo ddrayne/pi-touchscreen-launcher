@@ -35,6 +35,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from launcher_watchdog import LauncherWatchdog
+
 
 HOST = os.environ.get("LAUNCHER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("LAUNCHER_PORT", "8765"))
@@ -66,6 +68,14 @@ LAUNCHER_LATITUDE = float(os.environ.get("LAUNCHER_LATITUDE", "55.95"))
 LAUNCHER_LONGITUDE = float(os.environ.get("LAUNCHER_LONGITUDE", "-3.19"))
 LAUNCHER_FACING = float(os.environ.get("LAUNCHER_FACING", "180"))
 LAUNCHER_PLACE = os.environ.get("LAUNCHER_PLACE", "Edinburgh").strip() or "Edinburgh"
+LAUNCHER_SERVICE = os.environ.get("LAUNCHER_SERVICE", "touchscreen-launcher.service")
+LAUNCHER_DEVTOOLS_URL = os.environ.get("LAUNCHER_DEVTOOLS_URL", "http://127.0.0.1:9222").rstrip("/")
+# Chromium keeps its shared memory in one of these tmpfs mounts (Debian's
+# wrapper picks /tmp); a leak there is the first sign of a wedge.
+LAUNCHER_SHM_DIRS = [
+    path for path in os.environ.get("LAUNCHER_SHM_DIRS", "/tmp:/dev/shm").split(":") if path
+]
+WATCHDOG_INTERVAL = float(os.environ.get("LAUNCHER_WATCHDOG_INTERVAL", "30"))
 CACHE_ROOT = Path(
     os.environ.get(
         "LAUNCHER_CACHE_ROOT",
@@ -262,6 +272,36 @@ def detect_camera_barcode(image: bytes) -> str:
                 pass
 
 
+class EventHub:
+    """Fan-out of small events to every open server-sent event stream."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.clients: set[queue.Queue[tuple[str, dict[str, Any]]]] = set()
+
+    def subscribe(self) -> queue.Queue[tuple[str, dict[str, Any]]]:
+        client: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(maxsize=50)
+        with self.lock:
+            self.clients.add(client)
+        return client
+
+    def unsubscribe(self, client: queue.Queue[tuple[str, dict[str, Any]]]) -> None:
+        with self.lock:
+            self.clients.discard(client)
+
+    def broadcast(self, event: str, payload: dict[str, Any]) -> None:
+        with self.lock:
+            clients = list(self.clients)
+        for client in clients:
+            try:
+                client.put_nowait((event, payload))
+            except queue.Full:
+                self.unsubscribe(client)
+
+
+WAKE_EVENTS = EventHub()
+
+
 def wake_status() -> dict[str, Any]:
     with WAKE_LOCK:
         return {
@@ -290,6 +330,7 @@ def trigger_wake() -> dict[str, Any]:
             "sequence": WAKE_SEQUENCE,
             "muted": False,
         }
+    WAKE_EVENTS.broadcast("wake", dict(payload))
     focused, detail = focus_window("assistant")
     payload.update({"focused": focused, "detail": detail})
     return payload
@@ -301,11 +342,9 @@ def acknowledge_wake(sequence: int | None) -> dict[str, Any]:
     with WAKE_LOCK:
         if sequence is None or sequence == WAKE_SEQUENCE:
             WAKE_EXPIRES_AT = 0.0
-        return {
-            "pending": time.monotonic() < WAKE_EXPIRES_AT,
-            "sequence": WAKE_SEQUENCE,
-            "muted": time.monotonic() < WAKE_MUTED_UNTIL,
-        }
+    status = wake_status()
+    WAKE_EVENTS.broadcast("wake", status)
+    return status
 
 
 def mute_wake(seconds: float) -> dict[str, Any]:
@@ -315,11 +354,106 @@ def mute_wake(seconds: float) -> dict[str, Any]:
     with WAKE_LOCK:
         WAKE_EXPIRES_AT = 0.0
         WAKE_MUTED_UNTIL = time.monotonic() + duration
-        return {
+        status = {
             "pending": False,
             "sequence": WAKE_SEQUENCE,
             "muted": duration > 0,
         }
+    WAKE_EVENTS.broadcast("wake", dict(status))
+    return status
+
+
+def launcher_uptime() -> float | None:
+    """Seconds since the kiosk service last became active, or None when it is not."""
+    try:
+        result = subprocess.run(
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "show",
+                LAUNCHER_SERVICE,
+                "-p",
+                "ActiveState",
+                "-p",
+                "ActiveEnterTimestampMonotonic",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+    if values.get("ActiveState") != "active":
+        return None
+    try:
+        entered = int(values.get("ActiveEnterTimestampMonotonic", "0")) / 1_000_000
+    except ValueError:
+        return None
+    return max(0.0, time.monotonic() - entered)
+
+
+def launcher_window_active() -> bool:
+    """True unless the compositor says another window has the screen."""
+    try:
+        result = subprocess.run(
+            ["/usr/bin/wlrctl", "toplevel", "find", WINDOW_MATCHES["assistant"], "state:active"],
+            check=False,
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return result.returncode == 0
+
+
+def devtools_ok() -> bool:
+    """The browser's UI thread answers this; a wedged one never does."""
+    try:
+        with urllib.request.urlopen(f"{LAUNCHER_DEVTOOLS_URL}/json/version", timeout=5) as response:
+            return 200 <= response.status < 300
+    except (OSError, ValueError, urllib.error.URLError):
+        return False
+
+
+def shared_memory_used() -> int:
+    used = 0
+    for path in LAUNCHER_SHM_DIRS:
+        try:
+            stats = os.statvfs(path)
+        except OSError:
+            continue
+        used = max(used, (stats.f_blocks - stats.f_bfree) * stats.f_frsize)
+    return used
+
+
+def restart_launcher(reason: str) -> None:
+    subprocess.run(
+        ["/usr/bin/systemctl", "--user", "restart", LAUNCHER_SERVICE],
+        check=False,
+        capture_output=True,
+        timeout=90,
+    )
+
+
+WATCHDOG = LauncherWatchdog(
+    launcher_uptime=launcher_uptime,
+    window_active=launcher_window_active,
+    devtools_ok=devtools_ok,
+    tmp_used_bytes=shared_memory_used,
+    restart=restart_launcher,
+    log=lambda message: print(message, flush=True),
+)
+
+
+def run_watchdog() -> None:
+    while True:
+        time.sleep(WATCHDOG_INTERVAL)
+        try:
+            WATCHDOG.tick()
+        except Exception as error:  # noqa: BLE001 - the watchdog must outlive any surprise
+            print(f"Launcher watchdog error: {error}", flush=True)
 
 
 def safe_name(value: str) -> str:
@@ -717,8 +851,47 @@ class LauncherHandler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        # Routine successful reads (the heartbeat poll, assets, snapshots)
+        # would be a hundred thousand journal lines a day; keep writes and errors.
+        try:
+            status = int(code)
+        except (TypeError, ValueError):
+            status = 0
+        if self.command == "GET" and 200 <= status < 400:
+            return
+        super().log_request(code, size)
+
     def log_message(self, message: str, *args: Any) -> None:
         print(f"{self.address_string()} - {message % args}", flush=True)
+
+    def note_page_activity(self) -> None:
+        """Only the page's own main thread makes these requests."""
+        WATCHDOG.heartbeat()
+
+    def stream_wake_events(self) -> None:
+        client = WAKE_EVENTS.subscribe()
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            self.wfile.write(f"event: wake\ndata: {json.dumps(wake_status())}\n\n".encode("utf-8"))
+            self.wfile.flush()
+            while True:
+                try:
+                    event, payload = client.get(timeout=15.0)
+                except queue.Empty:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    continue
+                self.wfile.write(f"event: {event}\ndata: {json.dumps(payload)}\n\n".encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            WAKE_EVENTS.unsubscribe(client)
 
     def send_json(self, payload: Any, status: int = HTTPStatus.OK) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -1002,6 +1175,12 @@ class LauncherHandler(SimpleHTTPRequestHandler):
             )
 
     def do_GET(self) -> None:  # noqa: N802
+        self.note_page_activity()
+
+        if self.path == "/api/wake/events":
+            self.stream_wake_events()
+            return
+
         if self.path == "/api/status":
             self.send_json(
                 {
@@ -1017,6 +1196,7 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                     ),
                     "openClawUrl": OPENCLAW_URL,
                     "frame": True,
+                    "watchdog": WATCHDOG.status(),
                 }
             )
             return
@@ -1177,6 +1357,11 @@ class LauncherHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
+        # Wake triggers come from the wake listener and window switches from
+        # BirdFrame's Home pill; everything else is the page itself.
+        if self.path not in {"/api/wake", "/api/window"}:
+            self.note_page_activity()
+
         if self.path == "/api/shopping/camera/analyze":
             self.analyze_camera_for_shopping()
             return
@@ -1279,6 +1464,8 @@ class LauncherHandler(SimpleHTTPRequestHandler):
 
         if self.path == "/api/wake":
             action = payload.get("action", "trigger")
+            if action != "trigger":
+                self.note_page_activity()
             if action == "trigger":
                 self.send_json(trigger_wake())
                 return
@@ -1319,9 +1506,11 @@ class LauncherHandler(SimpleHTTPRequestHandler):
         )
 
     def do_PATCH(self) -> None:  # noqa: N802
+        self.note_page_activity()
         self.proxy_shopping_write("PATCH")
 
     def do_DELETE(self) -> None:  # noqa: N802
+        self.note_page_activity()
         self.proxy_shopping_write("DELETE")
 
     def guess_type(self, path: str) -> str:
@@ -1340,6 +1529,7 @@ def main() -> None:
     )
     WATCHER.start()
     threading.Thread(target=warm_portraits_from_census, name="census-warm", daemon=True).start()
+    threading.Thread(target=run_watchdog, name="launcher-watchdog", daemon=True).start()
     server.serve_forever()
 
 
