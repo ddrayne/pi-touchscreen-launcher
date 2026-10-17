@@ -1,0 +1,266 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import {
+  composeField,
+  describeField,
+  FIELD_COLS,
+  FIELD_ROWS,
+  HERO_MIN_CELLS,
+  MAX_SIDE,
+} from "../lib/frame/poster.ts";
+import { applyDetection, parseSnapshot } from "../lib/frame/scene.ts";
+
+async function fixture(name) {
+  return JSON.parse(await readFile(new URL(`../fixtures/${name}`, import.meta.url), "utf8"));
+}
+
+const RECEIVED = new Date(2026, 9, 6, 7, 42, 10).getTime();
+/** Fifty-five minutes on from the fixture only three species are still in the hour. */
+const QUIET_NOW = RECEIVED + 55 * 60_000;
+
+async function morning() {
+  return parseSnapshot(await fixture("now-morning.json"), RECEIVED, await fixture("today-morning.json"));
+}
+
+// A loud afternoon: fourteen species in the hour, the most recent a wood pigeon.
+const LOUD_NOW = new Date(2026, 9, 6, 15, 0, 0).getTime();
+const LOUD = [
+  ["Common Wood Pigeon", "Columba palumbus", 2, 0.5, "confirmed"],
+  ["Eurasian Blue Tit", "Cyanistes caeruleus", 41, 3, "confirmed"],
+  ["House Sparrow", "Passer domesticus", 10, 1, "confirmed"],
+  ["Great Tit", "Parus major", 12, 7, "confirmed"],
+  ["Eurasian Blackbird", "Turdus merula", 8, 12, "confirmed"],
+  ["European Robin", "Erithacus rubecula", 4, 18, "confirmed"],
+  ["Eurasian Wren", "Troglodytes troglodytes", 3, 25, "probable"],
+  ["Eurasian Magpie", "Pica pica", 2, 30, "probable"],
+  ["Carrion Crow", "Corvus corone", 2, 35, "probable"],
+  ["Dunnock", "Prunella modularis", 1, 20, "probable"],
+  ["Common Chaffinch", "Fringilla coelebs", 1, 38, "tentative"],
+  ["European Goldfinch", "Carduelis carduelis", 1, 40, "tentative"],
+  ["Long-tailed Tit", "Aegithalos caudatus", 1, 42, "tentative"],
+  ["Eurasian Jay", "Garrulus glandarius", 1, 44, "tentative"],
+];
+
+function stamp(at) {
+  const date = new Date(at);
+  const pad = (value) => String(value).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  );
+}
+
+function loudSnapshot() {
+  const feed = LOUD.map(([common_name, scientific_name, , minutesAgo, tier], index) => ({
+    id: 9_000 - index,
+    timestamp: stamp(LOUD_NOW - minutesAgo * 60_000),
+    common_name,
+    scientific_name,
+    confidence: 0.8,
+    tier,
+  }));
+  const species = LOUD.map(([common_name, scientific_name, count, , tier]) => ({
+    common_name,
+    scientific_name,
+    count,
+    tier,
+  }));
+  const extras = Array.from({ length: 37 }, (_, index) => ({
+    common_name: `Species ${index + 1}`,
+    scientific_name: `Avis ${index + 1}`,
+    count: 1,
+    tier: "tentative",
+  }));
+  return parseSnapshot(
+    {
+      window_minutes: 60,
+      latest: { ...feed[0], at: feed[0].timestamp.slice(11) },
+      feed,
+      window_species: species,
+      today_species_count: 51,
+      new_today: ["Eurasian Jay"],
+    },
+    LOUD_NOW,
+    { species: [...species, ...extras] },
+  );
+}
+
+function detectionFor(snapshot, commonName, at) {
+  const species = snapshot.species.find((entry) => entry.commonName === commonName);
+  return {
+    id: 10_000 + Math.round(at / 1000),
+    commonName,
+    scientificName: species?.scientificName ?? "",
+    confidence: 0.9,
+    at,
+    seenAt: at,
+    tier: species?.tier ?? "confirmed",
+  };
+}
+
+function cellsOf(area) {
+  return area.cols * area.rows;
+}
+
+function birds(field) {
+  return field.blocks.filter((block) => block.kind === "bird");
+}
+
+function areasByName(field) {
+  return new Map(birds(field).map((block) => [block.key, block.area]));
+}
+
+function sameOrigin(a, b) {
+  return a.col === b.col && a.row === b.row;
+}
+
+/** Every cell of the field is owned by exactly one block. */
+function assertTiled(field) {
+  const owners = new Map();
+  for (const block of field.blocks) {
+    const { col, row, cols, rows } = block.area;
+    assert.ok(col >= 0 && row >= 0 && col + cols <= FIELD_COLS && row + rows <= FIELD_ROWS, `${block.key} is inside the field`);
+    for (let x = col; x < col + cols; x += 1) {
+      for (let y = row; y < row + rows; y += 1) {
+        const cell = `${x},${y}`;
+        assert.equal(owners.get(cell), undefined, `${cell} is owned once (${block.key} vs ${owners.get(cell)})`);
+        owners.set(cell, block.key);
+      }
+    }
+  }
+  assert.equal(owners.size, FIELD_COLS * FIELD_ROWS, "every cell is covered");
+}
+
+test("every cell is covered by exactly one block, quiet or loud", async () => {
+  const snapshot = await morning();
+  assertTiled(composeField(snapshot, RECEIVED, null));
+  assertTiled(composeField(snapshot, QUIET_NOW, null));
+  assertTiled(composeField(loudSnapshot(), LOUD_NOW, null));
+});
+
+test("no side exceeds the maximum and the hero has its minimum", async () => {
+  for (const field of [
+    composeField(await morning(), QUIET_NOW, null),
+    composeField(loudSnapshot(), LOUD_NOW, null),
+  ]) {
+    for (const block of field.blocks) {
+      assert.ok(block.area.cols <= MAX_SIDE && block.area.rows <= MAX_SIDE, `${block.key} within ${MAX_SIDE}`);
+    }
+    const heroes = birds(field).filter((block) => block.hero);
+    assert.equal(heroes.length, 1);
+    assert.ok(cellsOf(heroes[0].area) >= HERO_MIN_CELLS, `hero has ${cellsOf(heroes[0].area)} cells`);
+  }
+});
+
+test("a quiet hour widens to today; a loud one stays in the hour", async () => {
+  const snapshot = await morning();
+  assert.equal(composeField(snapshot, RECEIVED, null).window, "hour");
+  const quiet = composeField(snapshot, QUIET_NOW, null);
+  assert.equal(quiet.window, "today");
+  assert.equal(birds(quiet).length, 9, "the whole cast of the day is on the poster");
+  for (const block of birds(quiet)) assert.ok(block.ink >= 0.2, "today's ink never drops below the floor");
+  const loud = composeField(loudSnapshot(), LOUD_NOW, null);
+  assert.equal(loud.window, "hour");
+  assert.deepEqual(composeField(null, LOUD_NOW, null), { window: "hour", blocks: [] });
+});
+
+test("the hero is the latest call and new-to-garden birds are flagged", () => {
+  const field = composeField(loudSnapshot(), LOUD_NOW, null);
+  const hero = birds(field).find((block) => block.hero);
+  assert.equal(hero.key, "Common Wood Pigeon");
+  assert.ok(hero.ink > 0.95);
+  assert.ok(hero.age < 60_000);
+  assert.equal(birds(field).find((block) => block.key === "Eurasian Jay").newToGarden, true);
+  assert.equal(hero.newToGarden, false);
+});
+
+test("the field is deterministic", async () => {
+  const snapshot = loudSnapshot();
+  assert.deepEqual(composeField(snapshot, LOUD_NOW, null), composeField(snapshot, LOUD_NOW, null));
+  const quiet = await morning();
+  assert.deepEqual(composeField(quiet, QUIET_NOW, null), composeField(quiet, QUIET_NOW, null));
+});
+
+test("a repeat call that changes no shape leaves every block where it was", () => {
+  const snapshot = loudSnapshot();
+  const previous = composeField(snapshot, LOUD_NOW, null);
+  const later = LOUD_NOW + 30_000;
+  const next = composeField(
+    applyDetection(snapshot, detectionFor(snapshot, "Common Wood Pigeon", later - 10_000)),
+    later,
+    previous,
+  );
+  const before = areasByName(previous);
+  const after = areasByName(next);
+  assert.deepEqual([...after.keys()].sort(), [...before.keys()].sort());
+  for (const [name, area] of before) {
+    assert.equal(cellsOf(after.get(name)), cellsOf(area), `${name} keeps its cell count`);
+    assert.deepEqual(after.get(name), area, `${name} keeps its area`);
+  }
+});
+
+test("when the hero grows it grows in place and most neighbours stay put", () => {
+  const snapshot = loudSnapshot();
+  const previous = composeField(snapshot, LOUD_NOW, null);
+  const later = LOUD_NOW + 30_000;
+  const next = composeField(
+    applyDetection(snapshot, detectionFor(snapshot, "Eurasian Blue Tit", later - 10_000)),
+    later,
+    previous,
+  );
+  const before = areasByName(previous);
+  const after = areasByName(next);
+  const hero = birds(next).find((block) => block.hero);
+  assert.equal(hero.key, "Eurasian Blue Tit");
+  assert.ok(cellsOf(hero.area) > cellsOf(before.get(hero.key)), "the new hero grew");
+  assert.ok(sameOrigin(hero.area, before.get(hero.key)), "the hero kept its origin");
+  const others = [...before.keys()].filter((name) => name !== hero.key && after.has(name));
+  const kept = others.filter((name) => sameOrigin(before.get(name), after.get(name)));
+  assert.ok(
+    kept.length >= Math.ceil(others.length * 0.7),
+    `${kept.length} of ${others.length} kept their origin\n${describeField(previous)}\n\n${describeField(next)}`,
+  );
+  assertTiled(next);
+});
+
+test("a newcomer opens as a single cell and at most one block makes room", () => {
+  const snapshot = loudSnapshot();
+  const previous = composeField(snapshot, LOUD_NOW, null);
+  const goldcrest = {
+    commonName: "Goldcrest",
+    scientificName: "Regulus regulus",
+    count: 1,
+    tier: "probable",
+    lastHeard: LOUD_NOW - 10 * 60_000,
+  };
+  const next = composeField(
+    { ...snapshot, species: [...snapshot.species, goldcrest] },
+    LOUD_NOW + 30_000,
+    previous,
+  );
+  const before = areasByName(previous);
+  const after = areasByName(next);
+  const newcomer = after.get("Goldcrest");
+  assert.deepEqual([newcomer.cols, newcomer.rows], [1, 1]);
+  const resized = [...before.keys()].filter((name) => cellsOf(after.get(name)) !== cellsOf(before.get(name)));
+  assert.ok(resized.length <= 1, `resized: ${resized.join(", ")}`);
+  for (const name of before.keys()) {
+    if (resized.includes(name)) continue;
+    assert.deepEqual(after.get(name), before.get(name), `${name} keeps its area`);
+  }
+  assertTiled(next);
+});
+
+test("the loud field leaves little ground", () => {
+  const field = composeField(loudSnapshot(), LOUD_NOW, null);
+  const ground = field.blocks.filter((block) => block.kind === "ground");
+  assert.ok(ground.length <= 6, `${ground.length} ground blocks\n${describeField(field)}`);
+});
+
+test("describeField draws the grid one character per cell", async () => {
+  const lines = describeField(composeField(await morning(), QUIET_NOW, null)).split("\n");
+  assert.equal(lines.length, FIELD_ROWS);
+  for (const line of lines) assert.equal(line.length, FIELD_COLS);
+});

@@ -9,6 +9,7 @@ import { useCallback, useMemo, type CSSProperties } from "react";
 import { agendaFor, type HubEvent } from "../../lib/frame/agenda.ts";
 import { showPaintingPlate } from "../../lib/frame/birds.ts";
 import type { FrameConfig } from "../../lib/frame/config.ts";
+import { GOLD, PAPER_DAY, PAPER_NIGHT, typeInkFor } from "../../lib/frame/palette.ts";
 import { usePortraits } from "../../lib/frame/portraits.ts";
 import {
   bloomIsLeaving,
@@ -26,7 +27,6 @@ import {
   moonPosition,
   rgbCss,
   skyPalette,
-  smoothstep,
   sunIsRising,
   sunPosition,
   sunTimes,
@@ -39,6 +39,8 @@ import { Agenda, RollCall, WeatherStrip } from "./Board.tsx";
 import { Gallery } from "./Gallery.tsx";
 import { Sky } from "./Sky.tsx";
 import "./frame.css";
+
+export { typeInkFor };
 
 export type FrameMode = "frame" | "home" | "conversation";
 
@@ -60,27 +62,14 @@ type FrameProps = {
   onOpenJournal: () => void;
 };
 
-const PAPER_DAY: Rgb = [242, 239, 229];
-const PAPER_NIGHT: Rgb = [26, 30, 50];
 const GROUND_DAY: Rgb = [236, 233, 222];
 const GROUND_NIGHT: Rgb = [22, 26, 44];
 const CLOUD_DAY: Rgb = [251, 248, 239];
 const CLOUD_NIGHT: Rgb = [46, 52, 84];
 const INK_DAY: Rgb = [22, 42, 36];
 const INK_NIGHT: Rgb = [9, 11, 24];
-const TYPE_DAY: Rgb = [22, 42, 36];
-const TYPE_NIGHT: Rgb = [236, 228, 206];
-const GOLD: Rgb = [201, 133, 54];
 const PULSE_MS = 3_000;
 const ROLL_ROWS = 6;
-
-/**
- * Type follows the paper, not the sun: dark ink while the washed sky is
- * light, cream once dusk has taken it. Home uses it too, over the same sky.
- */
-export function typeInkFor(darkness: number): Rgb {
-  return mixRgb(TYPE_DAY, TYPE_NIGHT, smoothstep(0.18, 0.3, darkness));
-}
 
 const CLOCK = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
 const DATE = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" });
