@@ -330,7 +330,7 @@ export const StatusBlock = memo(function StatusBlock({
   );
 });
 
-export const AgendaBlock = memo(function AgendaBlock({ items, gridArea, onTap }: HouseProps & { items: AgendaItem[] }) {
+export const AgendaBlock = memo(function AgendaBlock({ items, gridArea, onTap }: HouseProps & { items: AgendaItem[]; onTap: () => void }) {
   const shown = items.slice(0, 2);
   return (
     <button type="button" className="pb pb--house pb--agenda" style={{ gridArea }} {...tapProps(onTap)}>
@@ -349,7 +349,7 @@ export const AgendaBlock = memo(function AgendaBlock({ items, gridArea, onTap }:
   );
 });
 
-export const ListBlock = memo(function ListBlock({ count, gridArea, onTap }: HouseProps & { count: number }) {
+export const ListBlock = memo(function ListBlock({ count, gridArea, onTap }: HouseProps & { count: number; onTap: () => void }) {
   return (
     <button type="button" className="pb pb--house pb--list" style={{ gridArea }} {...tapProps(onTap)}>
       <span className="pb__label">House list</span>
