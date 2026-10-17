@@ -23,6 +23,8 @@ install -m 0755 "$source_dir/bridge/wake_listener.py" \
   "$app_root/bridge/wake_listener.py"
 install -m 0644 "$source_dir/bridge/launcher_watchdog.py" \
   "$app_root/bridge/launcher_watchdog.py"
+install -m 0644 "$source_dir/bridge/portrait_features.py" \
+  "$app_root/bridge/portrait_features.py"
 ln -sfn "$release_dir" "$app_root/current"
 
 install -d "$HOME/.config/touchscreen-launcher"

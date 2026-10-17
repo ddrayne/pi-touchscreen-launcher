@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from launcher_watchdog import LauncherWatchdog
+from portrait_features import portrait_features
 
 
 HOST = os.environ.get("LAUNCHER_HOST", "127.0.0.1")
@@ -611,9 +612,34 @@ class PortraitCache:
                 if time.time() - float(meta.get("checked_at", 0)) < PORTRAIT_RETRY_SECONDS:
                     return None
             elif (self.root / str(meta.get("file", ""))).is_file():
-                return meta
+                if "tint" in meta or meta.get("features_checked"):
+                    return meta
+                return self._with_features(meta, meta_path)
         with self.lock:
             return self._fetch(scientific_name, meta_path, key)
+
+    def _with_features(self, meta: dict[str, Any], meta_path: Path) -> dict[str, Any]:
+        """Add the tint and focal point to a portrait cached before they existed, once."""
+        with self.lock:
+            try:
+                fresh = json.loads(meta_path.read_text("utf-8"))
+                if isinstance(fresh, dict) and ("tint" in fresh or fresh.get("features_checked")):
+                    return fresh
+            except (OSError, ValueError):
+                pass
+            try:
+                features = portrait_features((self.root / str(meta["file"])).read_bytes())
+            except Exception:  # noqa: BLE001 - a portrait without features is still a portrait
+                features = None
+            if features:
+                meta.update(features)
+            else:
+                meta["features_checked"] = True
+            try:
+                meta_path.write_text(json.dumps(meta), "utf-8")
+            except OSError:
+                pass
+            return meta
 
     def _fetch(self, scientific_name: str, meta_path: Path, key: str) -> dict[str, Any] | None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -635,6 +661,9 @@ class PortraitCache:
                 "source": info["source"],
                 "checked_at": time.time(),
             }
+            features = portrait_features(image)
+            if features:
+                meta.update(features)
             meta_path.write_text(json.dumps(meta), "utf-8")
             return meta
         except (OSError, ValueError, LookupError, KeyError, urllib.error.URLError) as error:
@@ -1088,6 +1117,8 @@ class LauncherHandler(SimpleHTTPRequestHandler):
                 "artist": meta.get("artist"),
                 "license": meta.get("license"),
                 "source": meta.get("source"),
+                "tint": meta.get("tint"),
+                "focal": meta.get("focal"),
             }
         )
 
