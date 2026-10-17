@@ -9,7 +9,7 @@ import type { AgendaItem } from "../../lib/frame/agenda.ts";
 import type { Portrait } from "../../lib/frame/portraits.ts";
 import type { BirdBlock as BirdBlockModel, MoreBlock as MoreBlockModel, PosterArea } from "../../lib/frame/poster.ts";
 import { tierWeight } from "../../lib/frame/palette.ts";
-import { tierWord } from "../../lib/frame/scene.ts";
+import { agoWord, tierWord } from "../../lib/frame/scene.ts";
 import type { Rgb } from "../../lib/frame/solar.ts";
 import { tapProps } from "./tap.ts";
 import {
@@ -164,12 +164,10 @@ export const BirdBlock = memo(function BirdBlock({
     "--fx": portrait?.focal ? portrait.focal.x.toFixed(3) : "0.5",
     "--fy": portrait?.focal ? portrait.focal.y.toFixed(3) : "0.5",
   } as CSSProperties;
-  const meta = [
-    species.lastHeard ? clockOf(species.lastHeard) : "",
-    species.tier ? tierWord(species.tier) : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  // When, as the poster reads it: how long ago, newest first in gold; the
+  // journal has the clock times.
+  const ago = species.lastHeard ? agoWord(block.age) : "";
+  const tierNote = species.tier ? tierWord(species.tier) : "";
   return (
     <button
       type="button"
@@ -195,7 +193,9 @@ export const BirdBlock = memo(function BirdBlock({
         <span className="pb__name">{species.commonName}</span>
         {tier !== "tiny" ? (
           <span className="pb__meta">
-            {meta}
+            {ago ? <span className="pb__ago">{ago}</span> : null}
+            {ago && tierNote ? " · " : ""}
+            {tierNote}
             <span className="pb__dots" aria-hidden="true">
               {"●".repeat(Math.min(species.count, 14))}
               {species.count > 14 ? ` +${species.count - 14}` : ""}

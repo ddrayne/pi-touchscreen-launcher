@@ -33,9 +33,17 @@ Decisions taken in the brainstorm:
   `1 + log2(calls)` scaled by recency. A packer turns weights into blocks
   between 1 × 1 and 4 × 4. The latest bird is guaranteed at least 3 × 3.
   Species that don't fit collapse into one "and N more" block.
-- Positions are stable: a block grows or shrinks in place and shoves
-  neighbours; it never teleports. The packer is seeded by species name so the
-  same garden gives the same arrangement across reboots.
+- Reading order is time order. The blocks are dealt newest first, the latest
+  bird at the top left, each at the first place after the last one's origin
+  where its shape fits, so reading the field left to right and down is
+  reading the hour newest to oldest. Each block says how long ago ("just
+  now", "12 min ago"); the newest bird's is the one gold word on the field.
+- Between events nothing moves or changes size, however the ink cools. The
+  field is dealt afresh only when a bird is heard, a bird leaves the window,
+  or the window changes; the deal is a FLIP transition. Sizes carry a one-shape
+  hysteresis from the previous field so a re-deal does not jiggle the rest.
+  Each block leans tall or wide by its name, so the same garden gives the
+  same arrangement across reboots.
 - Fewer than four species in the hour: draw from today instead; the honesty
   line reads "9 voices today · quiet for 25 min".
 
@@ -63,7 +71,8 @@ Decisions taken in the brainstorm:
 - Idle: only the clock tick and one very slow ground drift animate.
 - Arrival: the block flashes to full tint, a ring expands and fades, a dot
   drops in. A size change is a FLIP transition on grid placement (transforms
-  only, ~900 ms). A new species opens out from its centre as a 1 × 1.
+  only, ~900 ms). A new species takes its place in time, the others shuffle
+  along in order.
 - Cooling: once a minute each block's age sets a CSS variable with a long
   transition.
 - Breathing: the activity buckets set one tempo that drives gutter width and
@@ -97,8 +106,9 @@ Decisions taken in the brainstorm:
   widening rule, minimum-size guarantee, stability, overflow are pure.
 - `lib/frame/palette.ts`: ground colours from solar state; cooling curve.
 - `tests/frame-poster.test.mjs`: loud hour fills 36 cells with no overlap or
-  gap; quiet hour widens; a new call grows a block in place without moving
-  others' origins; deterministic; sizes within 1 × 1 … 4 × 4.
+  gap; quiet hour widens; the field reads newest to oldest; nothing moves
+  between events; a bird heard again goes to the top and the rest follow;
+  deterministic; sizes within 1 × 1 … 4 × 4.
 - Bridge: portrait cache gains `tint` and `focal`, computed once with Pillow;
   omitted when Pillow is missing.
 - `components/frame/Poster.tsx` renders the grid and runs FLIP on area

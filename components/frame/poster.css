@@ -121,6 +121,13 @@
   overflow-wrap: anywhere;
 }
 
+/* The newest bird's "just now" is the one gold word on the field. */
+.pb[data-hero="true"] .pb__ago {
+  color: rgb(var(--frame-gold-rgb));
+  font-style: normal;
+  font-weight: 600;
+}
+
 .pb__meta {
   margin: 10px 0 0;
   font-size: 17px;

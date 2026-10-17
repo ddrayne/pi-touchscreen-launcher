@@ -113,10 +113,6 @@ function areasByName(field) {
   return new Map(birds(field).map((block) => [block.key, block.area]));
 }
 
-function sameOrigin(a, b) {
-  return a.col === b.col && a.row === b.row;
-}
-
 /** Every cell of the field is owned by exactly one block. */
 function assertTiled(field) {
   const owners = new Map();
@@ -202,7 +198,36 @@ test("a repeat call that changes no shape leaves every block where it was", () =
   }
 });
 
-test("when the hero grows it grows in place and most neighbours stay put", () => {
+/** The field read left to right and down: bird blocks by their origin. */
+function readingOrder(field) {
+  return birds(field)
+    .slice()
+    .sort((left, right) => left.area.row * FIELD_COLS + left.area.col - (right.area.row * FIELD_COLS + right.area.col))
+    .map((block) => block.key);
+}
+
+/** The birds newest first, the hero ahead; the order the deal must read in. */
+function timeOrder(field) {
+  return birds(field)
+    .slice()
+    .sort((left, right) => (left.hero !== right.hero ? (left.hero ? -1 : 1) : right.species.lastHeard - left.species.lastHeard))
+    .map((block) => block.key);
+}
+
+test("the field reads newest to oldest, hero first at the top left", async () => {
+  for (const field of [
+    composeField(loudSnapshot(), LOUD_NOW, null),
+    composeField(await morning(), RECEIVED, null),
+    composeField(await morning(), QUIET_NOW, null),
+    composeField(loudSnapshot(), LOUD_NOW, null, { window: "today", maxBirds: 14 }),
+  ]) {
+    assert.deepEqual(readingOrder(field), timeOrder(field), describeField(field));
+    const hero = birds(field).find((block) => block.hero);
+    assert.deepEqual([hero.area.col, hero.area.row], [0, 0]);
+  }
+});
+
+test("a bird heard again goes to the top and the rest follow it in time order", () => {
   const snapshot = loudSnapshot();
   const previous = composeField(snapshot, LOUD_NOW, null);
   const later = LOUD_NOW + 30_000;
@@ -211,22 +236,28 @@ test("when the hero grows it grows in place and most neighbours stay put", () =>
     later,
     previous,
   );
-  const before = areasByName(previous);
-  const after = areasByName(next);
   const hero = birds(next).find((block) => block.hero);
   assert.equal(hero.key, "Eurasian Blue Tit");
-  assert.ok(cellsOf(hero.area) > cellsOf(before.get(hero.key)), "the new hero grew");
-  assert.ok(sameOrigin(hero.area, before.get(hero.key)), "the hero kept its origin");
-  const others = [...before.keys()].filter((name) => name !== hero.key && after.has(name));
-  const kept = others.filter((name) => sameOrigin(before.get(name), after.get(name)));
-  assert.ok(
-    kept.length >= Math.ceil(others.length * 0.7),
-    `${kept.length} of ${others.length} kept their origin\n${describeField(previous)}\n\n${describeField(next)}`,
-  );
+  assert.deepEqual([hero.area.col, hero.area.row], [0, 0]);
+  assert.ok(cellsOf(hero.area) >= HERO_MIN_CELLS);
+  assert.deepEqual(readingOrder(next), timeOrder(next), `${describeField(previous)}\n\n${describeField(next)}`);
+  assert.equal(readingOrder(next)[1], "Common Wood Pigeon", "the old hero is next in line");
   assertTiled(next);
 });
 
-test("a newcomer opens small, into the room at most one block makes for it", () => {
+test("between events nothing moves, however the ink cools", () => {
+  const snapshot = loudSnapshot();
+  const first = composeField(snapshot, LOUD_NOW, null);
+  let field = first;
+  for (let minutes = 1; minutes <= 12; minutes += 1) {
+    field = composeField(snapshot, LOUD_NOW + minutes * 60_000, field);
+    assert.deepEqual([...areasByName(field)], [...areasByName(first)], `moved at +${minutes} min\n${describeField(first)}\n\n${describeField(field)}`);
+    const hero = birds(field).find((block) => block.hero);
+    assert.equal(hero.age, minutes * 60_000 + 30_000, "ages still go on");
+  }
+});
+
+test("a newcomer that is not the newest takes its place in time, and the rest keep their order", () => {
   const snapshot = loudSnapshot();
   const previous = composeField(snapshot, LOUD_NOW, null);
   const goldcrest = {
@@ -236,24 +267,16 @@ test("a newcomer opens small, into the room at most one block makes for it", () 
     tier: "probable",
     lastHeard: LOUD_NOW - 10 * 60_000,
   };
-  const next = composeField(
-    { ...snapshot, species: [...snapshot.species, goldcrest] },
-    LOUD_NOW + 30_000,
-    previous,
+  const next = composeField({ ...snapshot, species: [...snapshot.species, goldcrest] }, LOUD_NOW + 30_000, previous);
+  const order = readingOrder(next);
+  assert.deepEqual(order, timeOrder(next), describeField(next));
+  assert.ok(order.indexOf("Great Tit") < order.indexOf("Goldcrest"), "heard seven minutes ago, the Great Tit reads first");
+  assert.ok(order.indexOf("Goldcrest") < order.indexOf("Eurasian Blackbird"), "heard twelve minutes ago, the Blackbird reads after");
+  assert.deepEqual(
+    order.filter((name) => name !== "Goldcrest"),
+    readingOrder(previous),
+    "everyone else keeps their order",
   );
-  const before = areasByName(previous);
-  const after = areasByName(next);
-  const resized = [...before.keys()].filter((name) => cellsOf(after.get(name)) !== cellsOf(before.get(name)));
-  assert.ok(resized.length <= 1, `resized: ${resized.join(", ")}`);
-  const freed = resized.reduce((sum, name) => sum + cellsOf(before.get(name)) - cellsOf(after.get(name)), 0);
-  assert.ok(freed >= 1, "the one block that changes makes room by shrinking");
-  const newcomer = after.get("Goldcrest");
-  assert.ok(cellsOf(newcomer) <= freed, `the newcomer's ${cellsOf(newcomer)} cells fit the ${freed} made for it`);
-  for (const name of before.keys()) {
-    if (resized.includes(name)) continue;
-    assert.deepEqual(after.get(name), before.get(name), `${name} keeps its area`);
-  }
-  assert.equal(next.blocks.filter((block) => block.kind === "ground").length, 0, "nothing is left for the next tick to absorb");
   assertTiled(next);
 });
 
@@ -288,16 +311,15 @@ test("a newcomer hero opens at full size and the field then holds still without 
   assertTiled(third);
 });
 
-test("birds dropped by a cap leave no ground: their neighbours grow into the cells", () => {
+test("birds dropped by a cap leave next to no ground, and the rest still read in time order", () => {
   const snapshot = loudSnapshot();
   const first = composeField(snapshot, LOUD_NOW, null);
   const second = composeField(snapshot, LOUD_NOW + 15_000, first, { maxBirds: 10 });
   assert.equal(birds(second).length, 10);
   assert.equal(second.blocks.find((block) => block.kind === "more").names.length, 4);
-  const ground = second.blocks.filter((block) => block.kind === "ground");
-  assert.equal(ground.length, 0, `ground left behind\n${describeField(first)}\n\n${describeField(second)}`);
-  const before = areasByName(first);
-  for (const block of birds(second)) assert.ok(sameOrigin(block.area, before.get(block.key)), `${block.key} kept its origin`);
+  const ground = second.blocks.filter((block) => block.kind === "ground").reduce((sum, block) => sum + cellsOf(block.area), 0);
+  assert.ok(ground <= 1, `${ground} ground cells left behind\n${describeField(first)}\n\n${describeField(second)}`);
+  assert.deepEqual(readingOrder(second), timeOrder(second), describeField(second));
   assertTiled(second);
 });
 
@@ -346,6 +368,8 @@ test("a cap on bird blocks keeps the hero, sends the rest to more, and holds ste
   assert.ok(birds.some((block) => block.hero), "the hero survives the cap");
   const more = first.blocks.find((block) => block.kind === "more");
   assert.equal(birds.length + more.names.length, snapshot.todaySpeciesCount);
+  const lastBird = birds.reduce((last, block) => (block.area.row * FIELD_COLS + block.area.col > last.area.row * FIELD_COLS + last.area.col ? block : last));
+  assert.ok(more.area.row * FIELD_COLS + more.area.col > lastBird.area.row * FIELD_COLS + lastBird.area.col, `the more block reads last\n${describeField(first)}`);
   assertTiled(first);
   const second = composeField(snapshot, LOUD_NOW + 15_000, first, { window: "today", maxBirds: 14 });
   assert.deepEqual(

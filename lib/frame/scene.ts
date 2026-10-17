@@ -428,6 +428,17 @@ export function castFor(snapshot: FrameSnapshot | null): FrameSpecies[] {
   return cast;
 }
 
+/** How long ago a call was, in the poster's words: minutes while they are few, then hours. */
+export function agoWord(ageMs: number): string {
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes === 1) return "a minute ago";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours === 1) return minutes < 90 ? "an hour ago" : "an hour and a half ago";
+  return `${hours} h ago`;
+}
+
 export function tierWord(tier: Tier | undefined): string {
   if (tier === "confirmed") return "confirmed";
   if (tier === "probable") return "probable";
