@@ -1291,6 +1291,20 @@ export function Launcher() {
     [stopVoice],
   );
 
+  // The poster's house blocks open the Household page, or the list itself.
+  const openHousehold = useCallback(
+    (panel?: "agenda" | "shopping") => {
+      setLastTouch(Date.now());
+      setMode("home");
+      if (panel === "shopping") {
+        openShopping();
+        return;
+      }
+      showHubPage(1);
+    },
+    [openShopping, showHubPage],
+  );
+
   const cancelHubSwipe = useCallback(() => {
     swipeStart.current = null;
   }, []);
@@ -1489,6 +1503,7 @@ export function Launcher() {
         mode={mode}
         voices={voices}
         onOpenJournal={openBirdframe}
+        onOpenHousehold={openHousehold}
       />
       {mode === "frame" ? null : (
       <>

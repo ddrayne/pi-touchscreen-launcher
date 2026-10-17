@@ -69,6 +69,9 @@ for (const entry of selected) {
     page.on("console", (message) => {
       if (message.type() === "error") console.error(`[${entry.name}] console: ${message.text()}`);
     });
+    page.on("response", (response) => {
+      if (response.status() >= 400) console.error(`[${entry.name}] ${response.status()} ${response.url()}`);
+    });
     await page.goto(`http://127.0.0.1:${port}/?at=${encodeURIComponent(entry.at)}${entry.query || ""}`, {
       waitUntil: "load",
     });

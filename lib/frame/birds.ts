@@ -39,7 +39,3 @@ export function todayTiles(
   return { tiles: all.slice(0, limit), more: Math.max(0, all.length - limit) };
 }
 
-/** After last light, the day's painting hangs beside the agenda. */
-export function showPaintingPlate(darkness: number, artwork: string | null | undefined): boolean {
-  return darkness > 0.85 && Boolean(artwork);
-}

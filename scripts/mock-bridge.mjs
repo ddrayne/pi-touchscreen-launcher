@@ -445,6 +445,11 @@ const server = createServer(async (request, response) => {
     });
   }
   if (path === "/api/wake") return json(response, 200, { pending: false, sequence: 0, muted: false });
+  if (path === "/api/wake/events") {
+    response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+    response.write(": wake stream\n\n");
+    return;
+  }
   if (path === "/api/window") return json(response, 200, { ok: true, target: "birdframe", detail: "mock" });
   if (path === "/api/display") return json(response, 200, { ok: true, brightness: 1 });
   if (path.startsWith("/api/")) {

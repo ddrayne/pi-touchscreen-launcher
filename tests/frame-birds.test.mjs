@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { showPaintingPlate, todayTiles } from "../lib/frame/birds.ts";
+import { todayTiles } from "../lib/frame/birds.ts";
 
 const NOW = new Date(2026, 9, 12, 21, 30, 0).getTime();
 const MIN = 60_000;
@@ -57,8 +57,3 @@ test("no snapshot means no tiles", () => {
   assert.deepEqual(todayTiles(null, NOW), { tiles: [], more: 0 });
 });
 
-test("the painting is a plate only at night and only when there is one", () => {
-  assert.equal(showPaintingPlate(0.9, "/art.png"), true);
-  assert.equal(showPaintingPlate(0.5, "/art.png"), false);
-  assert.equal(showPaintingPlate(0.95, null), false);
-});
